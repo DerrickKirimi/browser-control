@@ -15,6 +15,7 @@ from browser_control.miniwob_assets import MiniwobAssetServer, ensure_miniwob_as
 from browser_control.rewards import build_click_test_rows, make_click_test_reward
 from browser_control.training import (
     SmokeTrainingConfig,
+    configure_model_for_training,
     create_lora_config,
     trainable_parameter_names,
     validate_lora_targets,
@@ -63,6 +64,7 @@ def run(output_dir: Path, assets_dir: Path) -> dict[str, object]:
         dataset = Dataset.from_list(rows)
         tokenizer = AutoTokenizer.from_pretrained(config.model_id)
         model = AutoModelForCausalLM.from_pretrained(config.model_id, dtype=dtype)
+        configure_model_for_training(model)
         target_counts = validate_lora_targets(name for name, _ in model.named_modules())
 
         arguments = GRPOConfig(
@@ -86,7 +88,6 @@ def run(output_dir: Path, assets_dir: Path) -> dict[str, object]:
             fp16=device.training_dtype == "float16",
             bf16=device.training_dtype == "bfloat16",
             gradient_checkpointing=True,
-            use_cache=False,
             logging_steps=1,
             logging_first_step=True,
             save_strategy="no",

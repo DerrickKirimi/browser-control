@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 
 from browser_control.training import (
     LFM2_LORA_TARGET_MODULES,
+    configure_model_for_training,
     trainable_parameter_names,
     validate_lora_targets,
 )
@@ -55,3 +58,12 @@ def test_trainable_parameters_must_be_adapter_only() -> None:
         trainable_parameter_names((("base.weight", _Parameter(True)),))
     with pytest.raises(RuntimeError, match="no trainable"):
         trainable_parameter_names((("base.weight", _Parameter(False)),))
+
+
+def test_model_cache_is_disabled_at_model_boundary() -> None:
+    model = SimpleNamespace(config=SimpleNamespace(use_cache=True))
+    configure_model_for_training(model)
+    assert model.config.use_cache is False
+
+    with pytest.raises(TypeError, match="config"):
+        configure_model_for_training(object())

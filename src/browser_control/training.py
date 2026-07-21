@@ -75,3 +75,11 @@ def trainable_parameter_names(named_parameters: Iterable[tuple[str, Any]]) -> tu
             "non-LoRA parameters are trainable: " + ", ".join(unexpected)
         )
     return names
+
+
+def configure_model_for_training(model: Any) -> None:
+    """Apply model-level settings that are not stable GRPOConfig arguments."""
+
+    if not hasattr(model, "config"):
+        raise TypeError("model must expose a config object")
+    model.config.use_cache = False
