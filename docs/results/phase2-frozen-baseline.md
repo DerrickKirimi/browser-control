@@ -3,6 +3,8 @@
 Run date: 2026-07-21
 
 Source commit evaluated: `538bca494d678ba377c4440a13306b53d8e4e15d`
+(`add github auth`: the frozen-policy evaluation pipeline plus secure Colab repository
+authentication used for this execution)
 
 ## Runtime
 
@@ -49,5 +51,6 @@ model-generated action was sent to the environment. This is the intended baselin
 it separates policy-format failure from environment or reward failure.
 
 The raw `frozen-policy.json` remains an uncommitted experiment artifact. The Colab
-notebook committed in `e190c3443c467d1436b49866abc89a567774d6bd` preserves the
+executed frozen-policy notebook committed in
+`e190c3443c467d1436b49866abc89a567774d6bd` preserves the
 full execution output.

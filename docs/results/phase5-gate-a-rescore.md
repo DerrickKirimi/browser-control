@@ -69,7 +69,10 @@ therefore deliberately narrow.
 - Adapter SHA-256:
   `5b76ee537e2f39115090f7cf3afec6b6e766fe92a1376f80a2713e8de35f66ea`
 - The hash matches `adapter_model.safetensors` in the original Phase 5 ZIP.
-- Evaluator commit: `cf3dea74319dd506d25ac4845755948b6e95c360`
+- Evaluator commit: `cf3dea74319dd506d25ac4845755948b6e95c360` — paired
+  frozen-versus-LoRA evaluation implementation with four declared decoder conditions
+- Executed notebook commit: `46b1158` — saved Colab outputs from that paired decoder
+  comparison
 - GPU: Tesla T4, compute capability 7.5
 - PyTorch: 2.11.0+cu128
 - Transformers: 4.57.3

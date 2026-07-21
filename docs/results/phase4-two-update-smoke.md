@@ -1,8 +1,12 @@
 # Phase 4 two-update smoke result
 
 Date: 2026-07-21  
-Colab notebook commit: `33b81c7`  
-Training-code commit: `c0dee8a`  
+Colab notebook commit: `33b81c7` — executed two-update run with zero reward variance
+and zero gradients
+
+Training-code commit: `c0dee8a` — idempotent Colab repository setup and smoke-run
+implementation used for this attempt
+
 Raw local artifact: `smoke-report.json` (ignored)  
 Adapter archive: `phase4-smoke-adapter.zip` (ignored)
 
@@ -59,8 +63,10 @@ produces reward diversity, finite nonzero gradients, and a confirmed LoRA update
 ## Nonzero-update rerun
 
 - Date: 2026-07-21
-- Colab notebook commit: `e844418`
-- Training-code commit: `36da0ad`
+- Colab notebook commit: `e844418` — successful executed FP32 run with finite nonzero
+  gradients and changed LoRA tensors
+- Training-code commit: `36da0ad` — FP32 nonzero-update configuration used by the
+  successful rerun
 - Raw local artifact: `smoke-report (2).json` (ignored)
 - Adapter archive: `phase4-smoke-nonzero-adapter.zip` (ignored)
 
