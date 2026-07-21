@@ -7,5 +7,5 @@ artifacts/
 checkpoints/
 wandb/
 /frozen-policy.json
-/smoke-report.json
-/phase4-smoke-adapter.zip
+/smoke-report*.json
+/phase4-smoke-adapter*.zip

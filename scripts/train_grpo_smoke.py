@@ -57,9 +57,17 @@ def run(output_dir: Path, assets_dir: Path) -> dict[str, object]:
 
     config = SmokeTrainingConfig()
     device = inspect_cuda_device(torch)
-    dtype = getattr(torch, device.training_dtype)
+    # The first shaped-reward T4 run produced finite losses but NaN FP16 gradient
+    # norms. This correctness smoke uses FP32; mixed precision is a later tuning step.
+    dtype = torch.float32
+    training_dtype = "float32"
     document_root = ensure_miniwob_assets(assets_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
+    status_path = output_dir / "run-status.json"
+    status_path.write_text(
+        json.dumps({"status": "running", "report": "smoke-report.json"}, indent=2)
+        + "\n"
+    )
 
     with MiniwobAssetServer(document_root) as server:
         def environment_factory() -> LocalBrowserGymEnvironment:
@@ -92,8 +100,8 @@ def run(output_dir: Path, assets_dir: Path) -> dict[str, object]:
             scale_rewards="group",
             loss_type="grpo",
             mask_truncated_completions=True,
-            fp16=device.training_dtype == "float16",
-            bf16=device.training_dtype == "bfloat16",
+            fp16=False,
+            bf16=False,
             gradient_checkpointing=True,
             logging_steps=1,
             logging_first_step=True,
@@ -125,7 +133,6 @@ def run(output_dir: Path, assets_dir: Path) -> dict[str, object]:
             raise RuntimeError(
                 f"expected {config.max_steps} updates, got {trainer.state.global_step}"
             )
-        _assert_finite_metrics(trainer.state.log_history)
         changed_parameters = tuple(
             name
             for name, parameter in trainer.model.named_parameters()
@@ -137,11 +144,55 @@ def run(output_dir: Path, assets_dir: Path) -> dict[str, object]:
         nonzero_gradient = _has_positive_metric(
             trainer.state.log_history, "grad_norm"
         )
-        adapter_dir = output_dir / "adapter"
-        trainer.save_model(str(adapter_dir))
         global_step = trainer.state.global_step
         log_history = trainer.state.log_history
         training_loss = result.training_loss
+        report_path = output_dir / "smoke-report.json"
+        report = {
+            "model_id": config.model_id,
+            "global_steps": global_step,
+            "training_loss": training_loss,
+            "trainable_parameter_tensors": len(trainable),
+            "changed_parameter_tensors": len(changed_parameters),
+            "lora_target_counts": target_counts,
+            "dtype": training_dtype,
+            "gpu": device.name,
+            "peak_allocated_bytes": int(
+                torch.cuda.max_memory_allocated(device.index)
+            ),
+            "log_history": log_history,
+            "format_curriculum": True,
+            "reward_diversity": reward_diversity,
+            "reward_records": reward_function.records,
+            "nonzero_gradient": nonzero_gradient,
+            "reload_evaluation": None,
+        }
+        report_path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")
+        try:
+            _assert_finite_metrics(log_history)
+            if not math.isfinite(float(training_loss)):
+                raise RuntimeError(f"non-finite final training loss: {training_loss}")
+            failures: list[str] = []
+            if not reward_diversity:
+                failures.append("sampled rewards had no diversity")
+            if not nonzero_gradient:
+                failures.append("trainer emitted no positive gradient norm")
+            if not changed_parameters:
+                failures.append("no LoRA parameter tensor changed")
+            if failures:
+                raise RuntimeError("; ".join(failures))
+        except RuntimeError as error:
+            status_path.write_text(
+                json.dumps(
+                    {"status": "failure", "report": report_path.name, "error": str(error)},
+                    indent=2,
+                )
+                + "\n"
+            )
+            raise RuntimeError(f"{error}; inspect {report_path}") from error
+
+        adapter_dir = output_dir / "adapter"
+        trainer.save_model(str(adapter_dir))
 
         del trainer, model, result
         gc.collect()
@@ -161,44 +212,22 @@ def run(output_dir: Path, assets_dir: Path) -> dict[str, object]:
             environment_factory, reloaded_policy, seeds=(43, 44)
         )
 
-    report = {
-        "model_id": config.model_id,
-        "global_steps": global_step,
-        "training_loss": training_loss,
-        "trainable_parameter_tensors": len(trainable),
-        "changed_parameter_tensors": len(changed_parameters),
-        "lora_target_counts": target_counts,
-        "dtype": device.training_dtype,
-        "gpu": device.name,
-        "peak_allocated_bytes": int(torch.cuda.max_memory_allocated(device.index)),
-        "log_history": log_history,
-        "format_curriculum": True,
-        "reward_diversity": reward_diversity,
-        "reward_records": reward_function.records,
-        "nonzero_gradient": nonzero_gradient,
-        "reload_evaluation": reload_evaluation.to_dict(),
-    }
-    if not math.isfinite(float(training_loss)):
-        raise RuntimeError(f"non-finite final training loss: {training_loss}")
-    report_path = output_dir / "smoke-report.json"
+    report["reload_evaluation"] = reload_evaluation.to_dict()
     report_path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")
-    failures: list[str] = []
-    if not reward_diversity:
-        failures.append("sampled rewards had no diversity")
-    if not nonzero_gradient:
-        failures.append("trainer emitted no positive gradient norm")
-    if not changed_parameters:
-        failures.append("no LoRA parameter tensor changed")
-    if failures:
-        raise RuntimeError(
-            "; ".join(failures) + f"; inspect the preserved report at {report_path}"
-        )
+    status_path.write_text(
+        json.dumps({"status": "success", "report": report_path.name}, indent=2)
+        + "\n"
+    )
     return report
 
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--output-dir", type=Path, default=Path("artifacts/phase4-smoke"))
+    parser.add_argument(
+        "--output-dir",
+        type=Path,
+        default=Path("artifacts/phase4-smoke-nonzero"),
+    )
     parser.add_argument(
         "--assets-dir", type=Path, default=Path("artifacts/miniwob-plusplus")
     )
