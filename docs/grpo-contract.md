@@ -43,3 +43,9 @@ The first trainer integration pins `trl==0.29.0` and explicitly sets
 These choices match this small reference objective and avoid silently inheriting
 future defaults. DAPO-style batch-token normalization is a later controlled
 comparison, not part of this contract check.
+
+`tests/test_trl_contract.py` exercises TRL 0.29.0's real `_compute_loss` method
+with deterministic tensors. It verifies the clipped masked loss against the
+dependency-free calculation and confirms that a fully masked truncated completion
+contributes zero. The test is skipped unless the optional training dependencies
+are installed.

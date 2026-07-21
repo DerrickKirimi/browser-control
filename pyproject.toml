@@ -13,6 +13,9 @@ environment = [
 model = [
     "transformers==4.57.3",
 ]
+training = [
+    "trl==0.29.0",
+]
 
 [dependency-groups]
 dev = [
