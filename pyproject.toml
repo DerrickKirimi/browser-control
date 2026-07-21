@@ -10,6 +10,9 @@ dependencies = []
 environment = [
     "browsergym-miniwob==0.14.3",
 ]
+model = [
+    "transformers==4.57.3",
+]
 
 [dependency-groups]
 dev = [
