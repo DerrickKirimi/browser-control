@@ -2,9 +2,12 @@
 
 ## Result
 
-The controlled pilot completed on a Colab Tesla T4, but it did not improve the
-held-out strict task metric. Both the frozen and trained policies scored 0/20 on
-the fixed evaluation seeds 1000–1019, for a strict-success delta of zero.
+The controlled pilot completed on a Colab Tesla T4. Its original evaluation found
+0/20 strict successes from both frozen and trained policies, but this is not a
+held-out result: every `click-test` seed produces the same prompt, and the 20
+episodes repeated one near-deterministic output. Evaluation also used a different
+decoder from training. The result is therefore unresolved pending paired
+re-evaluation of the existing checkpoint.
 
 The final trained policy consistently emitted `click(13)`. That output is close
 to the required `click('13')`, but the strict parser correctly rejects its
@@ -15,25 +18,25 @@ unquoted argument. The frozen policy instead emitted malformed prose/HTML.
 - Model: `LiquidAI/LFM2-350M`
 - Training seeds: 23–42
 - Evaluation seeds: 1000–1019
-- Updates: 60; formatting shaping linearly removed by update 40
+- Execution: 60 optimizer steps over 15 four-completion generation groups
+- Formatting shaping: linearly removed by optimizer step 40 (group 10)
 - Precision: FP32
 - Training loss: -0.056379
 - Trainable LoRA tensors changed: 164/164
 - Frozen strict success: 0/20; invalid action rate: 100%
 - Trained strict success: 0/20; invalid action rate: 100%
 
-Strict-valid `click('13')` actions did appear in sampled training groups,
-including after shaping reached zero. This shows that the policy can sample the
-right grammar, but the final deterministic distribution mode did not retain the
-quotes.
+Strict-valid `click('13')` actions appeared during training. There were no
+successes among the first 36 completions, followed by 8/24 successes in the final
+six groups; 7/20 occurred after shaping reached zero, and the final group reached
+3/4. This strongly suggests format alignment but does not by itself establish a
+controlled frozen-versus-trained improvement.
 
-## Decision
+## Correction
 
-Do not run seeds 47 and 71 with this unchanged curriculum. The generic string
-similarity reward gives the nearly correct but invalid `click(13)` too much
-credit. The next pilot should use explicit, tested format components—especially
-quoted string arguments and exact lowercase action syntax—while preserving the
-same strict held-out evaluation.
+My first reading of this run as negative was wrong, because its evaluation used a
+different decoder from training. The paired re-evaluation in
+[`phase5-gate-a-rescore.md`](phase5-gate-a-rescore.md) supersedes it.
 
-The raw report and adapter are retained locally under the ignored
-`artifacts/phase5/seed-23/` directory.
+The raw report is in the
+[evidence bundle](https://huggingface.co/datasets/Aptheos/lfm-browser-control-evidence).
