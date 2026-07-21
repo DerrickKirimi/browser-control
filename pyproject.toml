@@ -14,6 +14,7 @@ model = [
     "transformers==4.57.3",
 ]
 training = [
+    "peft==0.19.1",
     "trl==0.29.0",
 ]
 
