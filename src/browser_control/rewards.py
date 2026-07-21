@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable, Iterable
+from difflib import SequenceMatcher
 from typing import Any
 
 from browser_control.actions import InvalidActionError, parse_click_test_action
@@ -10,6 +12,7 @@ from browser_control.environment import BrowserEnvironment
 from browser_control.prompts import build_click_test_messages
 
 EnvironmentFactory = Callable[[], BrowserEnvironment]
+_BUTTON_ID = re.compile(r"\[(?:bid=)?([^\]]+)\].*button.*click me", re.IGNORECASE)
 
 
 def _completion_text(completion: Any) -> str:
@@ -49,11 +52,31 @@ def build_click_test_rows(
     return rows
 
 
-def make_click_test_reward(environment_factory: EnvironmentFactory):
-    """Return a TRL-compatible reward function backed by BrowserGym."""
+def _target_action(accessibility_tree: str) -> str:
+    for line in accessibility_tree.splitlines():
+        match = _BUTTON_ID.search(line)
+        if match:
+            return f"click({match.group(1).strip()!r})"
+    raise RuntimeError("click-test observation has no identifiable target button")
 
-    def click_test_reward(
-        completions: list[Any], task_seed: list[int], **kwargs: Any
+
+class ClickTestReward:
+    """TRL reward callable with auditable per-completion records."""
+
+    __name__ = "click_test_reward"
+
+    def __init__(
+        self,
+        environment_factory: EnvironmentFactory,
+        *,
+        format_curriculum: bool,
+    ) -> None:
+        self.environment_factory = environment_factory
+        self.format_curriculum = format_curriculum
+        self.records: list[dict[str, Any]] = []
+
+    def __call__(
+        self, completions: list[Any], task_seed: list[int], **kwargs: Any
     ) -> list[float]:
         del kwargs
         if len(completions) != len(task_seed):
@@ -63,17 +86,72 @@ def make_click_test_reward(environment_factory: EnvironmentFactory):
             completion_text = _completion_text(completion)
             try:
                 action = parse_click_test_action(completion_text).render()
-            except InvalidActionError:
-                rewards.append(0.0)
+                valid_action = True
+                parse_error = None
+            except InvalidActionError as error:
+                action = None
+                valid_action = False
+                parse_error = str(error)
+
+            if not valid_action and not self.format_curriculum:
+                reward = 0.0
+                rewards.append(reward)
+                self._record(completion_text, int(seed), reward, False, False, parse_error)
                 continue
 
-            environment = environment_factory()
+            environment = self.environment_factory()
             try:
-                environment.reset(seed=int(seed))
-                result = environment.step(action)
-                rewards.append(1.0 if result.done and result.reward > 0 else 0.0)
+                initial = environment.reset(seed=int(seed))
+                target_action = _target_action(initial.observation.accessibility_tree)
+                if valid_action:
+                    result = environment.step(action)
+                    success = result.done and result.reward > 0
+                    reward = 1.0 if success else (0.25 if self.format_curriculum else 0.0)
+                else:
+                    success = False
+                    similarity = SequenceMatcher(
+                        None, completion_text.strip(), target_action
+                    ).ratio()
+                    reward = round(0.2 * similarity, 6)
             finally:
                 environment.close()
+            rewards.append(reward)
+            self._record(
+                completion_text,
+                int(seed),
+                reward,
+                valid_action,
+                success,
+                parse_error,
+            )
         return rewards
 
-    return click_test_reward
+    def _record(
+        self,
+        completion: str,
+        seed: int,
+        reward: float,
+        valid_action: bool,
+        success: bool,
+        parse_error: str | None,
+    ) -> None:
+        self.records.append(
+            {
+                "completion": completion,
+                "task_seed": seed,
+                "reward": reward,
+                "valid_action": valid_action,
+                "success": success,
+                "parse_error": parse_error,
+            }
+        )
+
+
+def make_click_test_reward(
+    environment_factory: EnvironmentFactory, *, format_curriculum: bool = False
+) -> ClickTestReward:
+    """Return a strict or explicitly shaped BrowserGym reward callable."""
+
+    return ClickTestReward(
+        environment_factory, format_curriculum=format_curriculum
+    )

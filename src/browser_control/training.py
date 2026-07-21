@@ -23,7 +23,7 @@ class SmokeTrainingConfig:
     seed: int = 23
     max_steps: int = 2
     num_generations: int = 4
-    max_completion_length: int = 16
+    max_completion_length: int = 32
     learning_rate: float = 1e-4
     lora_rank: int = 8
     lora_alpha: int = 16

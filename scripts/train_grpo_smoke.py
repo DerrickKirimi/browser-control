@@ -36,6 +36,13 @@ def _assert_finite_metrics(history: list[dict[str, object]]) -> None:
         raise RuntimeError("trainer emitted no loss or gradient metrics")
 
 
+def _has_positive_metric(history: list[dict[str, object]], key: str) -> bool:
+    return any(
+        isinstance(record.get(key), int | float) and float(record[key]) > 0.0
+        for record in history
+    )
+
+
 def run(output_dir: Path, assets_dir: Path) -> dict[str, object]:
     try:
         import torch
@@ -96,21 +103,40 @@ def run(output_dir: Path, assets_dir: Path) -> dict[str, object]:
             data_seed=config.seed,
             remove_unused_columns=False,
         )
+        reward_function = make_click_test_reward(
+            environment_factory, format_curriculum=True
+        )
         trainer = GRPOTrainer(
             model=model,
             processing_class=tokenizer,
-            reward_funcs=make_click_test_reward(environment_factory),
+            reward_funcs=reward_function,
             train_dataset=dataset,
             args=arguments,
             peft_config=create_lora_config(config),
         )
         trainable = trainable_parameter_names(trainer.model.named_parameters())
+        before_update = {
+            name: parameter.detach().cpu().clone()
+            for name, parameter in trainer.model.named_parameters()
+            if name in trainable
+        }
         result = trainer.train()
         if trainer.state.global_step != config.max_steps:
             raise RuntimeError(
                 f"expected {config.max_steps} updates, got {trainer.state.global_step}"
             )
         _assert_finite_metrics(trainer.state.log_history)
+        changed_parameters = tuple(
+            name
+            for name, parameter in trainer.model.named_parameters()
+            if name in before_update
+            and not torch.equal(before_update[name], parameter.detach().cpu())
+        )
+        reward_values = {record["reward"] for record in reward_function.records}
+        reward_diversity = len(reward_values) > 1
+        nonzero_gradient = _has_positive_metric(
+            trainer.state.log_history, "grad_norm"
+        )
         adapter_dir = output_dir / "adapter"
         trainer.save_model(str(adapter_dir))
         global_step = trainer.state.global_step
@@ -140,17 +166,33 @@ def run(output_dir: Path, assets_dir: Path) -> dict[str, object]:
         "global_steps": global_step,
         "training_loss": training_loss,
         "trainable_parameter_tensors": len(trainable),
+        "changed_parameter_tensors": len(changed_parameters),
         "lora_target_counts": target_counts,
         "dtype": device.training_dtype,
         "gpu": device.name,
         "peak_allocated_bytes": int(torch.cuda.max_memory_allocated(device.index)),
         "log_history": log_history,
+        "format_curriculum": True,
+        "reward_diversity": reward_diversity,
+        "reward_records": reward_function.records,
+        "nonzero_gradient": nonzero_gradient,
         "reload_evaluation": reload_evaluation.to_dict(),
     }
     if not math.isfinite(float(training_loss)):
         raise RuntimeError(f"non-finite final training loss: {training_loss}")
     report_path = output_dir / "smoke-report.json"
     report_path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")
+    failures: list[str] = []
+    if not reward_diversity:
+        failures.append("sampled rewards had no diversity")
+    if not nonzero_gradient:
+        failures.append("trainer emitted no positive gradient norm")
+    if not changed_parameters:
+        failures.append("no LoRA parameter tensor changed")
+    if failures:
+        raise RuntimeError(
+            "; ".join(failures) + f"; inspect the preserved report at {report_path}"
+        )
     return report
 
 

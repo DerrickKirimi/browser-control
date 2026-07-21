@@ -42,6 +42,7 @@ def test_reward_executes_only_strictly_valid_actions() -> None:
         ["noop()"],
     ]
     assert all(not environment._active for environment in created)
+    assert [record["valid_action"] for record in reward.records] == [True, True, False]
 
 
 def test_reward_rejects_misaligned_metadata() -> None:
@@ -70,3 +71,24 @@ def test_reward_rejects_ambiguous_completion_shapes(completion: object) -> None:
 def test_training_rows_reject_empty_seed_set() -> None:
     with pytest.raises(ValueError, match="at least one"):
         build_click_test_rows(lambda: FakeClickTestEnvironment(), ())
+
+
+def test_format_curriculum_produces_auditable_reward_levels() -> None:
+    reward = make_click_test_reward(
+        lambda: FakeClickTestEnvironment(), format_curriculum=True
+    )
+
+    rewards = reward(
+        ["click('13')", "noop()", 'click(<button id="13">Click Me!</button>)', "junk"],
+        [23, 23, 23, 23],
+    )
+
+    assert rewards[0] == 1.0
+    assert rewards[1] == 0.25
+    assert 0.0 <= rewards[3] < rewards[2] < 0.25
+    assert [record["completion"] for record in reward.records] == [
+        "click('13')",
+        "noop()",
+        'click(<button id="13">Click Me!</button>)',
+        "junk",
+    ]
