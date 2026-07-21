@@ -55,3 +55,33 @@ click(<button id="13">Click Me!</button>)
 This matches the frozen baseline failure mode and is expected because the smoke
 run had no learning signal. Phase 4 remains in progress until a second smoke run
 produces reward diversity, finite nonzero gradients, and a confirmed LoRA update.
+
+## Nonzero-update rerun
+
+- Date: 2026-07-21
+- Colab notebook commit: `e844418`
+- Training-code commit: `36da0ad`
+- Raw local artifact: `smoke-report (2).json` (ignored)
+- Adapter archive: `phase4-smoke-nonzero-adapter.zip` (ignored)
+
+The second run used the temporary formatting curriculum and FP32 after the first
+curriculum attempt produced NaN FP16 gradient norms.
+
+- Global optimizer steps: 2
+- Reward mean: 0.0630
+- Reward standard deviation: 0.03484
+- Fraction of zero-standard-deviation groups: 0.0
+- Losses: 0.6836 and -0.7450
+- Gradient norms: 5.1442 and 7.8142
+- LoRA tensors trainable: 164
+- LoRA tensors changed: 164
+- Training runtime: 5.67 seconds
+- Peak allocated GPU memory: 1,514,244,096 bytes (1.410 GiB)
+- Adapter save and reload: succeeded
+
+The four sampled curriculum rewards were distinct enough to produce a real update,
+but none of the completions passed the strict action parser. The two-seed reloaded
+evaluation remained 0/2 with the original malformed-action failure. This is not
+evidence of task learning; it closes Phase 4 because the complete optimizer and
+checkpoint path now has a verified nonzero update. Phase 5 must train for longer
+and evaluate only with strict environment-success reward.
