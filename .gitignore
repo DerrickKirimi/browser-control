@@ -9,3 +9,5 @@ wandb/
 /frozen-policy.json
 /smoke-report*.json
 /phase4-smoke*-adapter*.zip
+/controlled-report*.json
+/phase5-*-adapter*.zip

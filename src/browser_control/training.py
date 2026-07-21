@@ -29,6 +29,27 @@ class SmokeTrainingConfig:
     lora_alpha: int = 16
 
 
+@dataclass(frozen=True, slots=True)
+class ControlledTrainingConfig:
+    model_id: str = "LiquidAI/LFM2-350M"
+    seed: int = 23
+    max_steps: int = 60
+    curriculum_steps: int = 40
+    num_generations: int = 4
+    max_completion_length: int = 32
+    learning_rate: float = 1e-4
+    lora_rank: int = 8
+    lora_alpha: int = 16
+
+    def __post_init__(self) -> None:
+        if self.max_steps <= 0:
+            raise ValueError("max_steps must be positive")
+        if not 0 < self.curriculum_steps < self.max_steps:
+            raise ValueError("curriculum_steps must leave a strict-reward phase")
+        if self.num_generations < 2:
+            raise ValueError("num_generations must be at least two")
+
+
 def validate_lora_targets(
     module_names: Iterable[str],
     targets: tuple[str, ...] = LFM2_LORA_TARGET_MODULES,
@@ -46,7 +67,9 @@ def validate_lora_targets(
     return counts
 
 
-def create_lora_config(config: SmokeTrainingConfig) -> Any:
+def create_lora_config(
+    config: SmokeTrainingConfig | ControlledTrainingConfig,
+) -> Any:
     """Create the pinned PEFT configuration only in training-enabled runtimes."""
 
     try:

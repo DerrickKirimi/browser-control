@@ -6,6 +6,7 @@ import pytest
 
 from browser_control.training import (
     LFM2_LORA_TARGET_MODULES,
+    ControlledTrainingConfig,
     configure_model_for_training,
     trainable_parameter_names,
     validate_lora_targets,
@@ -67,3 +68,19 @@ def test_model_cache_is_disabled_at_model_boundary() -> None:
 
     with pytest.raises(TypeError, match="config"):
         configure_model_for_training(object())
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"max_steps": 0},
+        {"max_steps": 10, "curriculum_steps": 10},
+        {"max_steps": 10, "curriculum_steps": 0},
+        {"num_generations": 1},
+    ],
+)
+def test_controlled_config_requires_a_strict_reward_phase(
+    kwargs: dict[str, int],
+) -> None:
+    with pytest.raises(ValueError):
+        ControlledTrainingConfig(**kwargs)

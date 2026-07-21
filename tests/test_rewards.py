@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 
 from browser_control.rewards import build_click_test_rows, make_click_test_reward
@@ -92,3 +94,33 @@ def test_format_curriculum_produces_auditable_reward_levels() -> None:
         'click(<button id="13">Click Me!</button>)',
         "junk",
     ]
+
+
+def test_curriculum_weight_decays_to_strict_reward() -> None:
+    reward = make_click_test_reward(
+        lambda: FakeClickTestEnvironment(),
+        format_curriculum=True,
+        curriculum_steps=10,
+    )
+    completion = 'click(<button id="13">Click Me!</button>)'
+
+    initial = reward([completion], [23], trainer_state=SimpleNamespace(global_step=0))
+    halfway = reward([completion], [23], trainer_state=SimpleNamespace(global_step=5))
+    strict = reward([completion], [23], trainer_state=SimpleNamespace(global_step=10))
+
+    assert halfway[0] == pytest.approx(initial[0] / 2, abs=1e-6)
+    assert strict == [0.0]
+    assert [record["curriculum_weight"] for record in reward.records] == [
+        1.0,
+        0.5,
+        0.0,
+    ]
+
+
+def test_curriculum_steps_must_be_positive() -> None:
+    with pytest.raises(ValueError, match="positive"):
+        make_click_test_reward(
+            lambda: FakeClickTestEnvironment(),
+            format_curriculum=True,
+            curriculum_steps=0,
+        )
