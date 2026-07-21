@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterable
 from dataclasses import asdict, dataclass
+from math import sqrt
 from statistics import mean
 from typing import Protocol
 
@@ -53,6 +54,24 @@ class EvaluationReport:
         payload = asdict(self)
         payload["episodes"] = [asdict(episode) for episode in self.episodes]
         return payload
+
+
+def wilson_interval(successes: int, samples: int, z: float = 1.959963984540054) -> tuple[float, float]:
+    """Return a two-sided Wilson score interval for a binomial proportion."""
+
+    if samples <= 0:
+        raise ValueError("samples must be positive")
+    if not 0 <= successes <= samples:
+        raise ValueError("successes must be between zero and samples")
+    proportion = successes / samples
+    denominator = 1 + z**2 / samples
+    center = (proportion + z**2 / (2 * samples)) / denominator
+    margin = (
+        z
+        * sqrt(proportion * (1 - proportion) / samples + z**2 / (4 * samples**2))
+        / denominator
+    )
+    return center - margin, center + margin
 
 
 def evaluate_click_test(
@@ -124,4 +143,3 @@ def evaluate_click_test(
             result.generation_seconds for result in episode_results
         ),
     )
-

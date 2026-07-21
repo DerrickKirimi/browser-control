@@ -18,10 +18,12 @@ def test_manifest_writes_reproducibility_metadata(tmp_path) -> None:
     assert payload["config"]["environment"] == "fake-click-test"
     assert payload["python_version"]
     assert set(payload["packages"]) == {
+        "browsergym-core",
+        "browsergym-miniwob",
         "openenv-core",
+        "peft",
         "torch",
         "transformers",
         "trl",
         "vllm",
     }
-

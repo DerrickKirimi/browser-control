@@ -50,16 +50,30 @@ class RunManifest:
     platform: str = field(default_factory=platform.platform)
     packages: dict[str, str] = field(
         default_factory=lambda: _package_versions(
-            ["torch", "transformers", "trl", "openenv-core", "vllm"]
+            [
+                "torch",
+                "transformers",
+                "trl",
+                "peft",
+                "browsergym-core",
+                "browsergym-miniwob",
+                "openenv-core",
+                "vllm",
+            ]
         )
     )
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return JSON-compatible manifest data for embedding in reports."""
+
+        return asdict(self)
 
     def write(self, path: str | Path) -> Path:
         """Write stable, human-readable JSON without creating parent directories."""
 
         output_path = Path(path)
         output_path.write_text(
-            json.dumps(asdict(self), indent=2, sort_keys=True) + "\n",
+            json.dumps(self.to_dict(), indent=2, sort_keys=True) + "\n",
             encoding="utf-8",
         )
         return output_path

@@ -5,7 +5,11 @@ from dataclasses import dataclass
 
 import pytest
 
-from browser_control.evaluation import PolicyOutput, evaluate_click_test
+from browser_control.evaluation import (
+    PolicyOutput,
+    evaluate_click_test,
+    wilson_interval,
+)
 from browser_control.testing import FakeClickTestEnvironment
 
 
@@ -75,3 +79,17 @@ def test_report_is_json_compatible_shape() -> None:
     payload = report.to_dict()
     assert payload["success_rate"] == 1.0
     assert payload["episodes"][0]["seed"] == 23
+
+
+@pytest.mark.parametrize(
+    ("successes", "samples", "expected"),
+    [(0, 50, (0.0, 0.07135)), (25, 50, (0.36645, 0.63355)), (50, 50, (0.92865, 1.0))],
+)
+def test_wilson_interval(successes: int, samples: int, expected: tuple[float, float]) -> None:
+    assert wilson_interval(successes, samples) == pytest.approx(expected, abs=1e-5)
+
+
+@pytest.mark.parametrize(("successes", "samples"), [(-1, 50), (51, 50), (0, 0)])
+def test_wilson_interval_rejects_invalid_counts(successes: int, samples: int) -> None:
+    with pytest.raises(ValueError):
+        wilson_interval(successes, samples)
