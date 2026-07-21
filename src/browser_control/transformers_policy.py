@@ -34,7 +34,7 @@ class TransformersPolicy:
         device = inspect_cuda_device(torch)
         dtype = getattr(torch, device.training_dtype)
         tokenizer = AutoTokenizer.from_pretrained(model_id)
-        model = AutoModelForCausalLM.from_pretrained(model_id, torch_dtype=dtype)
+        model = AutoModelForCausalLM.from_pretrained(model_id, dtype=dtype)
         model.to(f"cuda:{device.index}")
         model.eval()
         return cls(model=model, tokenizer=tokenizer, torch=torch, device=device)
