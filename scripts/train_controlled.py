@@ -65,7 +65,8 @@ def run(
     document_root = ensure_miniwob_assets(assets_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     status_path = output_dir / "run-status.json"
-    report_path = output_dir / "controlled-report.json"
+    run_stem = f"phase5-click-test-seed-{seed:04d}-steps-{max_steps:04d}"
+    report_path = output_dir / f"{run_stem}-report.json"
     status_path.write_text(
         json.dumps({"status": "running", "report": report_path.name}, indent=2)
         + "\n"

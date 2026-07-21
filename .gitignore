@@ -11,3 +11,5 @@ wandb/
 /phase4-smoke*-adapter*.zip
 /controlled-report*.json
 /phase5-*-adapter*.zip
+/docs/results/*-report.json
+/docs/results/*-adapter.zip
