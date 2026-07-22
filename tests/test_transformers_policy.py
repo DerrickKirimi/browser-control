@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from browser_control.transformers_policy import DecoderConfig
+from browser_control.transformers_policy import TRAINING_DECODER, DecoderConfig
 
 
 def test_sampling_decoder_emits_only_declared_generation_arguments() -> None:
@@ -41,3 +41,20 @@ def test_decoder_rejects_two_probability_cutoffs() -> None:
             min_p=0.15,
             max_new_tokens=16,
         )
+
+
+def test_canonical_decoder_maps_identically_to_transformers_and_grpo() -> None:
+    transformers = TRAINING_DECODER.generation_kwargs()
+    grpo = TRAINING_DECODER.grpo_kwargs()
+
+    assert transformers == {
+        "do_sample": True,
+        "temperature": 1.0,
+        "top_p": 0.95,
+        "max_new_tokens": 32,
+    }
+    assert grpo == {
+        "temperature": 1.0,
+        "top_p": 0.95,
+        "max_completion_length": 32,
+    }

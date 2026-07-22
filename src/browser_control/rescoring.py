@@ -6,17 +6,11 @@ from dataclasses import asdict, dataclass
 
 from browser_control.evaluation import EvaluationReport, wilson_interval
 from browser_control.transformers_policy import (
-    CURRENT_EVALUATION_DECODER,
+    LEGACY_EVALUATION_DECODER,
+    TRAINING_DECODER,
     DecoderConfig,
 )
 
-TRAINING_DECODER = DecoderConfig(
-    name="training",
-    do_sample=True,
-    temperature=1.0,
-    top_p=0.95,
-    max_new_tokens=32,
-)
 NO_REPETITION_PENALTY_ABLATION = DecoderConfig(
     name="evaluation-no-repetition-penalty",
     do_sample=True,
@@ -33,7 +27,7 @@ GREEDY_DECODER = DecoderConfig(
 GATE_A_DECODERS = (
     TRAINING_DECODER,
     NO_REPETITION_PENALTY_ABLATION,
-    CURRENT_EVALUATION_DECODER,
+    LEGACY_EVALUATION_DECODER,
     GREEDY_DECODER,
 )
 

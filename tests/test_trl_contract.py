@@ -15,6 +15,7 @@ import pytest
 torch = pytest.importorskip("torch")
 trl = pytest.importorskip("trl")
 
+from browser_control.training import GenerationBatchPlan  # noqa: E402
 from browser_control.trajectory import (  # noqa: E402
     OneStepTrajectory,
     TrajectoryGroup,
@@ -110,3 +111,33 @@ def test_real_trl_loss_excludes_fully_masked_truncated_completion() -> None:
     )
 
     assert actual == 0.0
+
+
+@pytest.mark.parametrize(
+    ("batch_size", "generation_batch_size", "num_generations"),
+    [(1, 4, 4), (8, 8, 8)],
+)
+def test_generation_batch_plan_matches_pinned_trl_config(
+    tmp_path, batch_size: int, generation_batch_size: int, num_generations: int
+) -> None:
+    plan = GenerationBatchPlan(
+        per_device_train_batch_size=batch_size,
+        generation_batch_size=generation_batch_size,
+        num_generations=num_generations,
+    )
+    arguments = trl.GRPOConfig(
+        output_dir=str(tmp_path),
+        per_device_train_batch_size=batch_size,
+        generation_batch_size=generation_batch_size,
+        num_generations=num_generations,
+        gradient_accumulation_steps=1,
+        report_to="none",
+    )
+
+    assert trl.__version__ == "0.29.0"
+    assert arguments.steps_per_generation == plan.steps_per_generation
+    assert (
+        arguments.gradient_accumulation_steps
+        % (arguments.steps_per_generation * arguments.num_iterations)
+        != 0
+    ) == plan.requires_cached_old_logps

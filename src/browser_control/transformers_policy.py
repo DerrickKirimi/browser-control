@@ -47,8 +47,25 @@ class DecoderConfig:
                 kwargs[name] = value
         return kwargs
 
+    def grpo_kwargs(self) -> dict[str, Any]:
+        """Translate a sampling decoder into TRL's GRPOConfig field names."""
 
-CURRENT_EVALUATION_DECODER = DecoderConfig(
+        if not self.do_sample:
+            raise ValueError("GRPO generation requires a sampling decoder")
+        kwargs = self.generation_kwargs()
+        del kwargs["do_sample"]
+        kwargs["max_completion_length"] = kwargs.pop("max_new_tokens")
+        return kwargs
+
+
+TRAINING_DECODER = DecoderConfig(
+    name="training",
+    do_sample=True,
+    temperature=1.0,
+    top_p=0.95,
+    max_new_tokens=32,
+)
+LEGACY_EVALUATION_DECODER = DecoderConfig(
     name="current-evaluation",
     do_sample=True,
     temperature=0.3,
@@ -64,7 +81,7 @@ class TransformersPolicy:
     tokenizer: Any
     torch: Any
     device: CudaDevice
-    decoder: DecoderConfig = CURRENT_EVALUATION_DECODER
+    decoder: DecoderConfig = TRAINING_DECODER
 
     @classmethod
     def load(cls, model_id: str = DEFAULT_MODEL_ID) -> TransformersPolicy:

@@ -6,11 +6,13 @@ import argparse
 import gc
 import json
 import math
+from dataclasses import asdict
 from pathlib import Path
 
 from browser_control.evaluation import evaluate_click_test
 from browser_control.hardware import inspect_cuda_device
 from browser_control.local_browsergym import LocalBrowserGymEnvironment
+from browser_control.manifest import RunManifest
 from browser_control.miniwob_assets import MiniwobAssetServer, ensure_miniwob_assets
 from browser_control.rewards import build_click_test_rows, make_click_test_reward
 from browser_control.training import (
@@ -20,7 +22,7 @@ from browser_control.training import (
     trainable_parameter_names,
     validate_lora_targets,
 )
-from browser_control.transformers_policy import TransformersPolicy
+from browser_control.transformers_policy import TRAINING_DECODER, TransformersPolicy
 
 
 def _assert_finite_metrics(history: list[dict[str, object]]) -> None:
@@ -56,6 +58,15 @@ def run(output_dir: Path, assets_dir: Path) -> dict[str, object]:
         ) from error
 
     config = SmokeTrainingConfig()
+    manifest = RunManifest(
+        run_name="phase4-grpo-smoke",
+        seed=config.seed,
+        config={
+            "decoder": asdict(TRAINING_DECODER),
+            "task": "miniwob.click-test",
+            "training": asdict(config),
+        },
+    )
     device = inspect_cuda_device(torch)
     # The first shaped-reward T4 run produced finite losses but NaN FP16 gradient
     # norms. This correctness smoke uses FP32; mixed precision is a later tuning step.
@@ -89,9 +100,7 @@ def run(output_dir: Path, assets_dir: Path) -> dict[str, object]:
             per_device_train_batch_size=1,
             generation_batch_size=config.num_generations,
             num_generations=config.num_generations,
-            max_completion_length=config.max_completion_length,
-            temperature=1.0,
-            top_p=0.95,
+            **TRAINING_DECODER.grpo_kwargs(),
             use_vllm=False,
             beta=0.0,
             num_iterations=1,
@@ -149,6 +158,7 @@ def run(output_dir: Path, assets_dir: Path) -> dict[str, object]:
         training_loss = result.training_loss
         report_path = output_dir / "smoke-report.json"
         report = {
+            "manifest": manifest.to_dict(),
             "model_id": config.model_id,
             "global_steps": global_step,
             "training_loss": training_loss,
@@ -165,6 +175,13 @@ def run(output_dir: Path, assets_dir: Path) -> dict[str, object]:
             "reward_diversity": reward_diversity,
             "reward_records": reward_function.records,
             "nonzero_gradient": nonzero_gradient,
+            "generation_batching": {
+                "generation_batch_size": arguments.generation_batch_size,
+                "gradient_accumulation_steps": arguments.gradient_accumulation_steps,
+                "num_generations": arguments.num_generations,
+                "per_device_train_batch_size": arguments.per_device_train_batch_size,
+                "steps_per_generation": arguments.steps_per_generation,
+            },
             "reload_evaluation": None,
         }
         report_path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")

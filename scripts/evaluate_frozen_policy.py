@@ -4,12 +4,18 @@ from __future__ import annotations
 
 import argparse
 import json
+from dataclasses import asdict
 from pathlib import Path
 
 from browser_control.evaluation import evaluate_click_test
 from browser_control.local_browsergym import LocalBrowserGymEnvironment
+from browser_control.manifest import RunManifest
 from browser_control.miniwob_assets import MiniwobAssetServer, ensure_miniwob_assets
-from browser_control.transformers_policy import DEFAULT_MODEL_ID, TransformersPolicy
+from browser_control.transformers_policy import (
+    DEFAULT_MODEL_ID,
+    TRAINING_DECODER,
+    TransformersPolicy,
+)
 
 
 def main() -> None:
@@ -46,6 +52,18 @@ def main() -> None:
         )
 
     payload = {
+        "manifest": RunManifest(
+            run_name="frozen-policy-evaluation",
+            seed=args.first_seed,
+            config={
+                "decoder": asdict(TRAINING_DECODER),
+                "episodes": args.episodes,
+                "first_seed": args.first_seed,
+                "model_id": args.model_id,
+                "task": "miniwob.click-test",
+                "task_scope": "one seed-invariant prompt; not held-out generalization",
+            },
+        ).to_dict(),
         "model_id": args.model_id,
         "device": policy.device.to_dict(),
         "peak_vram_bytes": policy.torch.cuda.max_memory_allocated(

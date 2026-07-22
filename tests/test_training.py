@@ -7,6 +7,7 @@ import pytest
 from browser_control.training import (
     LFM2_LORA_TARGET_MODULES,
     ControlledTrainingConfig,
+    GenerationBatchPlan,
     configure_model_for_training,
     trainable_parameter_names,
     validate_lora_targets,
@@ -84,3 +85,47 @@ def test_controlled_config_requires_a_strict_reward_phase(
 ) -> None:
     with pytest.raises(ValueError):
         ControlledTrainingConfig(**kwargs)
+
+
+def test_historical_batching_reused_one_group_across_four_steps() -> None:
+    plan = GenerationBatchPlan(
+        per_device_train_batch_size=1,
+        generation_batch_size=4,
+        num_generations=4,
+    )
+
+    assert plan.steps_per_generation == 4
+    assert plan.groups_per_generation_batch == 1
+    assert plan.requires_cached_old_logps
+
+
+def test_proposed_batching_optimizes_a_full_eight_completion_group() -> None:
+    plan = GenerationBatchPlan(
+        per_device_train_batch_size=8,
+        generation_batch_size=8,
+        num_generations=8,
+    )
+
+    assert plan.steps_per_generation == 1
+    assert plan.groups_per_generation_batch == 1
+    assert not plan.requires_cached_old_logps
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {
+            "per_device_train_batch_size": 3,
+            "generation_batch_size": 8,
+            "num_generations": 8,
+        },
+        {
+            "per_device_train_batch_size": 4,
+            "generation_batch_size": 8,
+            "num_generations": 3,
+        },
+    ],
+)
+def test_generation_batch_plan_rejects_partial_groups(kwargs: dict[str, int]) -> None:
+    with pytest.raises(ValueError, match="divisible"):
+        GenerationBatchPlan(**kwargs)

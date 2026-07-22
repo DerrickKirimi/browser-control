@@ -6,12 +6,15 @@ import argparse
 import gc
 import json
 import math
+from dataclasses import asdict
 from pathlib import Path
 
 from browser_control.evaluation import evaluate_click_test
 from browser_control.hardware import inspect_cuda_device
 from browser_control.local_browsergym import LocalBrowserGymEnvironment
+from browser_control.manifest import RunManifest
 from browser_control.miniwob_assets import MiniwobAssetServer, ensure_miniwob_assets
+from browser_control.rescoring import GREEDY_DECODER, summarize_rescore
 from browser_control.rewards import build_click_test_rows, make_click_test_reward
 from browser_control.training import (
     ControlledTrainingConfig,
@@ -20,9 +23,9 @@ from browser_control.training import (
     trainable_parameter_names,
     validate_lora_targets,
 )
-from browser_control.transformers_policy import TransformersPolicy
+from browser_control.transformers_policy import TRAINING_DECODER, TransformersPolicy
 
-EVALUATION_SEEDS = tuple(range(1000, 1020))
+EVALUATION_SEEDS = tuple(range(2000, 2050))
 TRAIN_EPISODES = 20
 
 
@@ -36,11 +39,29 @@ def _finite_training_metrics(history: list[dict[str, object]]) -> bool:
     return bool(values) and all(math.isfinite(value) for value in values)
 
 
+def _evaluate_policy(
+    environment_factory, policy: TransformersPolicy
+) -> dict[str, dict[str, object]]:
+    policy.decoder = TRAINING_DECODER
+    stochastic = evaluate_click_test(environment_factory, policy, EVALUATION_SEEDS)
+    policy.decoder = GREEDY_DECODER
+    greedy = evaluate_click_test(environment_factory, policy, EVALUATION_SEEDS[:1])
+    return {
+        "stochastic": summarize_rescore(
+            TRAINING_DECODER, stochastic
+        ).to_dict(),
+        "greedy": summarize_rescore(GREEDY_DECODER, greedy).to_dict(),
+    }
+
+
 def run(
     *,
     seed: int,
     max_steps: int,
     curriculum_steps: int,
+    num_generations: int,
+    per_device_train_batch_size: int,
+    generation_batch_size: int,
     output_dir: Path,
     assets_dir: Path,
 ) -> dict[str, object]:
@@ -59,13 +80,36 @@ def run(
         seed=seed,
         max_steps=max_steps,
         curriculum_steps=curriculum_steps,
+        num_generations=num_generations,
+        per_device_train_batch_size=per_device_train_batch_size,
+        generation_batch_size=generation_batch_size,
+    )
+    manifest = RunManifest(
+        run_name="phase5-controlled-training",
+        seed=config.seed,
+        config={
+            "decoder": asdict(TRAINING_DECODER),
+            "task": "miniwob.click-test",
+            "task_scope": "one seed-invariant prompt; not held-out generalization",
+            "training": asdict(config),
+        },
     )
     device = inspect_cuda_device(torch)
     dtype = torch.float32
     document_root = ensure_miniwob_assets(assets_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     status_path = output_dir / "run-status.json"
-    run_stem = f"phase5-click-test-seed-{seed:04d}-steps-{max_steps:04d}"
+    if (
+        config.num_generations == 4
+        and config.per_device_train_batch_size == 1
+        and config.generation_batch_size == 4
+    ):
+        run_stem = f"phase5-click-test-seed-{seed:04d}-steps-{max_steps:04d}"
+    else:
+        run_stem = (
+            f"phase5-click-test-seed-{seed:04d}-groups-{max_steps:04d}"
+            f"-generations-{config.num_generations:04d}"
+        )
     report_path = output_dir / f"{run_stem}-report.json"
     status_path.write_text(
         json.dumps({"status": "running", "report": report_path.name}, indent=2)
@@ -86,9 +130,7 @@ def run(
         model.to(f"cuda:{device.index}")
         model.eval()
         frozen_policy = TransformersPolicy(model, tokenizer, torch, device)
-        frozen_evaluation = evaluate_click_test(
-            environment_factory, frozen_policy, EVALUATION_SEEDS
-        )
+        frozen_evaluation = _evaluate_policy(environment_factory, frozen_policy)
 
         configure_model_for_training(model)
         target_counts = validate_lora_targets(name for name, _ in model.named_modules())
@@ -101,12 +143,10 @@ def run(
             output_dir=str(output_dir),
             max_steps=config.max_steps,
             learning_rate=config.learning_rate,
-            per_device_train_batch_size=1,
-            generation_batch_size=config.num_generations,
+            per_device_train_batch_size=config.per_device_train_batch_size,
+            generation_batch_size=config.generation_batch_size,
             num_generations=config.num_generations,
-            max_completion_length=config.max_completion_length,
-            temperature=1.0,
-            top_p=0.95,
+            **TRAINING_DECODER.grpo_kwargs(),
             use_vllm=False,
             beta=0.0,
             num_iterations=1,
@@ -155,6 +195,7 @@ def run(
         training_loss = result.training_loss
 
         preliminary = {
+            "manifest": manifest.to_dict(),
             "seed": seed,
             "train_seeds": train_seeds,
             "evaluation_seeds": EVALUATION_SEEDS,
@@ -169,9 +210,16 @@ def run(
             "trainable_parameter_tensors": len(trainable),
             "changed_parameter_tensors": len(changed),
             "lora_target_counts": target_counts,
+            "generation_batching": {
+                "generation_batch_size": arguments.generation_batch_size,
+                "gradient_accumulation_steps": arguments.gradient_accumulation_steps,
+                "num_generations": arguments.num_generations,
+                "per_device_train_batch_size": arguments.per_device_train_batch_size,
+                "steps_per_generation": arguments.steps_per_generation,
+            },
             "reward_records": reward_function.records,
             "log_history": log_history,
-            "frozen_evaluation": frozen_evaluation.to_dict(),
+            "frozen_evaluation": frozen_evaluation,
             "trained_evaluation": None,
             "peak_allocated_bytes": int(
                 torch.cuda.max_memory_allocated(device.index)
@@ -196,13 +244,12 @@ def run(
         reloaded_model.to(f"cuda:{device.index}")
         reloaded_model.eval()
         trained_policy = TransformersPolicy(reloaded_model, tokenizer, torch, device)
-        trained_evaluation = evaluate_click_test(
-            environment_factory, trained_policy, EVALUATION_SEEDS
-        )
+        trained_evaluation = _evaluate_policy(environment_factory, trained_policy)
 
-    preliminary["trained_evaluation"] = trained_evaluation.to_dict()
+    preliminary["trained_evaluation"] = trained_evaluation
     preliminary["strict_success_delta"] = (
-        trained_evaluation.success_rate - frozen_evaluation.success_rate
+        trained_evaluation["stochastic"]["success_rate"]
+        - frozen_evaluation["stochastic"]["success_rate"]
     )
     report_path.write_text(json.dumps(preliminary, indent=2, sort_keys=True) + "\n")
     status_path.write_text(
@@ -217,6 +264,9 @@ def main() -> None:
     parser.add_argument("--seed", type=int, default=23)
     parser.add_argument("--max-steps", type=int, default=60)
     parser.add_argument("--curriculum-steps", type=int, default=40)
+    parser.add_argument("--num-generations", type=int, default=4)
+    parser.add_argument("--per-device-train-batch-size", type=int, default=1)
+    parser.add_argument("--generation-batch-size", type=int, default=4)
     parser.add_argument(
         "--output-dir", type=Path, default=Path("artifacts/phase5/seed-23")
     )
@@ -228,10 +278,25 @@ def main() -> None:
         seed=args.seed,
         max_steps=args.max_steps,
         curriculum_steps=args.curriculum_steps,
+        num_generations=args.num_generations,
+        per_device_train_batch_size=args.per_device_train_batch_size,
+        generation_batch_size=args.generation_batch_size,
         output_dir=args.output_dir,
         assets_dir=args.assets_dir,
     )
-    print(json.dumps(report, indent=2, sort_keys=True))
+    compact = {
+        "report": report["manifest"]["run_name"],
+        "global_steps": report["global_steps"],
+        "generation_batching": report["generation_batching"],
+        "frozen_stochastic_successes": report["frozen_evaluation"]["stochastic"][
+            "successes"
+        ],
+        "trained_stochastic_successes": report["trained_evaluation"]["stochastic"][
+            "successes"
+        ],
+        "strict_success_delta": report["strict_success_delta"],
+    }
+    print(json.dumps(compact, indent=2, sort_keys=True))
 
 
 if __name__ == "__main__":
