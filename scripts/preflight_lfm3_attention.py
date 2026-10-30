@@ -72,18 +72,28 @@ def forward(policy: LFM3Policy, prompts: list[list[dict]]) -> list[dict]:
     return rows
 
 
-def lora_attempt(policy, model, ids, target_length, checkpointing) -> dict:
+def lora_attempt(
+    policy, model, ids, target_length, checkpointing, *, initial_scale=65536.0
+) -> dict:
     """One real scaled backward and optimizer step; the adapter is discarded."""
     torch = policy.torch
-    row = {"prompt_tokens": int(ids.shape[-1]), "checkpointing": checkpointing}
+    row = {
+        "prompt_tokens": int(ids.shape[-1]),
+        "checkpointing": checkpointing,
+        "initial_scale": initial_scale,
+        "update_passed": False,
+    }
     trainable = {n: p for n, p in model.named_parameters() if p.requires_grad}
+    if not trainable or any("lora_" not in n for n in trainable):
+        raise ValueError("Only LoRA parameters may be trainable")
     before = {n: p.detach().cpu().clone() for n, p in trainable.items()}
     optimizer = torch.optim.SGD(trainable.values(), lr=1e-3)
-    scaler = torch.amp.GradScaler("cuda")
+    scaler = torch.amp.GradScaler("cuda", init_scale=initial_scale)
     model.zero_grad(set_to_none=True)
     torch.cuda.reset_peak_memory_stats()
     started = time.monotonic()
     gradients = []
+    logits = loss = norm = None
     try:
         if checkpointing:
             model.gradient_checkpointing_enable(
@@ -114,8 +124,14 @@ def lora_attempt(policy, model, ids, target_length, checkpointing) -> dict:
                 not torch.isfinite(g).all().item() for g in gradients
             ),
             nonzero_gradient_tensors=sum(bool(g.any().item()) for g in gradients),
+            nonfinite_gradient_names=[
+                n
+                for n, p in trainable.items()
+                if p.grad is not None and not torch.isfinite(p.grad).all().item()
+            ],
         )
         scaler.step(optimizer)
+        scaler.update()
         row.update(
             status="completed",
             changed_tensors=sum(
@@ -123,17 +139,31 @@ def lora_attempt(policy, model, ids, target_length, checkpointing) -> dict:
                 for n, p in trainable.items()
             ),
             seconds=time.monotonic() - started,
+            final_scale=scaler.get_scale(),
+            parameters_finite=all(
+                bool(torch.isfinite(p).all().item()) for p in trainable.values()
+            ),
         )
-        with torch.no_grad():
-            for name, parameter in trainable.items():
-                parameter.copy_(before[name].to(parameter.device))
+        row["update_passed"] = bool(
+            torch.isfinite(loss).item()
+            and torch.isfinite(norm).item()
+            and row["gradient_norm"] > 0
+            and row["tensors_with_gradient"] == len(trainable)
+            and not row["nonfinite_gradient_tensors"]
+            and row["parameters_finite"]
+            and row["changed_tensors"] > 0
+        )
     except torch.OutOfMemoryError as error:
         row.update(status="out-of-memory", error=str(error)[:300])
     except (RuntimeError, ValueError, TypeError, AttributeError) as error:
         row.update(status="error", error=f"{type(error).__name__}: {error}"[:600])
+    finally:
+        with torch.no_grad():
+            for name, parameter in trainable.items():
+                parameter.copy_(before[name].to(parameter.device))
     row["peak_vram_bytes"] = torch.cuda.max_memory_allocated()
-    print(row, flush=True)
-    logits = loss = gradients = None
+    print({k: v for k, v in row.items() if k != "nonfinite_gradient_names"}, flush=True)
+    logits = loss = norm = gradients = None
     model.zero_grad(set_to_none=True)
     gc.collect()
     torch.cuda.empty_cache()
