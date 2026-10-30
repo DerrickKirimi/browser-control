@@ -133,6 +133,8 @@ def main() -> None:
         "prompt_tokens": [e["prompt_tokens"] for e in encoded],
         "target_tokens": [e["target_tokens"] for e in encoded],
         "updates": [],
+        "example_losses": [],
+        "skill_losses": {},
         "before": [],
         "after": [],
         "before_rollouts": [],
@@ -193,7 +195,9 @@ def main() -> None:
     try:
         evaluate("before")
         torch.manual_seed(23)
-        model = get_peft_model(policy.model, LoraConfig(**LORA, revision=MODEL_REVISION))
+        model = get_peft_model(
+            policy.model, LoraConfig(**LORA, revision=MODEL_REVISION)
+        )
         policy.model = model
         model.config.use_cache = False
         model.train()
@@ -215,9 +219,10 @@ def main() -> None:
             optimizer.zero_grad(set_to_none=True)
             losses = []
             started = time.monotonic()
-            for example in encoded[
-                update * args.accumulation : (update + 1) * args.accumulation
-            ]:
+            start = update * args.accumulation
+            for position, example in enumerate(
+                encoded[start : start + args.accumulation], start=start
+            ):
                 ids = torch.tensor([example["input_ids"]], device="cuda:0")
                 target_length = example["target_tokens"]
                 with torch.autocast("cuda", dtype=torch.float16):
@@ -232,6 +237,23 @@ def main() -> None:
                 if not torch.isfinite(loss).item():
                     raise RuntimeError("Nonfinite loss; training stopped")
                 losses.append(loss.item())
+                metadata = examples[position]
+                report["example_losses"].append(
+                    {
+                        "update": update + 1,
+                        "task_seed": metadata["task_seed"],
+                        "turn": metadata["turn"],
+                        "skill": metadata["skill"],
+                        "loss": loss.item(),
+                        "target_tokens": target_length,
+                    }
+                )
+                skill = report["skill_losses"].setdefault(
+                    metadata["skill"], {"count": 0, "sum": 0.0}
+                )
+                skill["count"] += 1
+                skill["sum"] += loss.item()
+                skill["mean"] = skill["sum"] / skill["count"]
                 scaler.scale(loss / args.accumulation).backward()
                 del logits, loss, ids
             scaler.unscale_(optimizer)
