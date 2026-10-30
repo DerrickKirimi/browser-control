@@ -21,6 +21,7 @@ from browser_control.book_flight_diagnostic import (
     summarize_rollouts,
 )
 from browser_control.book_flight_evaluation import collect_book_flight_episode
+from browser_control.book_flight_ids import augment_training_examples
 from browser_control.book_flight_sft import encode_example, expert_examples
 from browser_control.lfm3 import MODEL_REVISION
 from browser_control.local_browsergym import LocalBrowserGymEnvironment
@@ -39,6 +40,7 @@ def main() -> None:
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--updates", type=int, default=16)
     parser.add_argument("--accumulation", type=int, default=4)
+    parser.add_argument("--id-permutation-seed", type=int)
     args = parser.parse_args()
     if args.updates <= 0 or args.accumulation <= 0:
         parser.error("updates and accumulation must be positive")
@@ -73,9 +75,23 @@ def main() -> None:
     ]
     if examples != corpus["examples"]:
         parser.error("Corpus examples do not match the clean successful records")
+    augmentation = None
+    if args.id_permutation_seed is not None:
+        examples, augmentation = augment_training_examples(
+            examples, seed=args.id_permutation_seed
+        )
+    if tokens.get("id_augmentation") != augmentation:
+        parser.error("Token validation must match the exact ID augmentation policy")
     needed = args.updates * args.accumulation
     if needed > len(examples):
         parser.error("Pilot must not repeat examples; collect more or reduce updates")
+    run_label = (
+        "id-randomized"
+        if augmentation is not None
+        else "corpus-pass"
+        if len(examples) - needed < args.accumulation
+        else "pilot"
+    )
     probes = json.loads(args.probes.read_text())["probes"]
     if any(probe["task_seed"] not in DEVELOPMENT_SEEDS for probe in probes):
         parser.error("Skill probes must use development seeds only")
@@ -98,9 +114,11 @@ def main() -> None:
         "status": "running",
         "source_snapshot": snapshot,
         "model_revision": MODEL_REVISION,
-        "scope": "SFT pilot; no held-out task estimate",
+        "scope": f"Bounded {run_label} SFT; no held-out task estimate",
         "config": {
             "seed": 23,
+            "run_label": run_label,
+            "id_augmentation": augmentation,
             "updates": args.updates,
             "accumulation": args.accumulation,
             "optimizer": "AdamW",
@@ -127,7 +145,17 @@ def main() -> None:
             )
         },
         "samples": [
-            {k: example[k] for k in ("task_seed", "turn", "skill")}
+            {
+                k: example[k]
+                for k in (
+                    "task_seed",
+                    "turn",
+                    "skill",
+                    "id_mapping_sha256",
+                    "id_permutation_seed",
+                )
+                if k in example
+            }
             for example in examples[:needed]
         ],
         "prompt_tokens": [e["prompt_tokens"] for e in encoded],
@@ -141,7 +169,7 @@ def main() -> None:
         "after_rollouts": [],
     }
     report["manifest"] = RunManifest(
-        "lfm3-book-flight-sft-pilot", 23, report["config"]
+        f"lfm3-book-flight-sft-{run_label}", 23, report["config"]
     ).to_dict()
     report_path = args.output_dir / "training.json"
 

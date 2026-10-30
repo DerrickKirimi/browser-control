@@ -4,9 +4,12 @@ from __future__ import annotations
 
 import ast
 import copy
+import hashlib
+import json
 import random
 import re
 from collections import defaultdict
+from pathlib import Path
 
 TREE_ID = re.compile(r"(?m)^([ \t]*\[)([\w-]+)(\](?:[ \t]|$))")
 SELECTOR_ID = re.compile(r"(\[bid\s*=\s*['\"])([\w-]+)(['\"]\])")
@@ -122,3 +125,57 @@ def compare_id_scores(original: dict, permuted: dict) -> dict:
         "skills": rows,
         "scope": "ID renumbering sensitivity; does not by itself establish a memorization mechanism or general grounding",
     }
+
+
+def augment_training_examples(
+    examples: list[dict], *, seed: int
+) -> tuple[list[dict], dict]:
+    """Relabel each independent SFT conversation and current target consistently.
+
+    Raw solver records stay unchanged. Each example uses its task/turn to draw
+    reproducibly, so shuffling does not change its augmentation. Only training
+    seeds are accepted; this is not a transformation of evaluation evidence.
+    """
+    from browser_control.book_flight_sft import TRAINING_SEEDS
+
+    augmented, hashes = [], []
+    for example in examples:
+        if example["task_seed"] not in TRAINING_SEEDS:
+            raise ValueError("ID-augmented SFT accepts only training seeds")
+        draw_seed = seed + example["task_seed"] * 16 + example["turn"]
+        surrogate = {
+            "messages": [*example["messages"], example["assistant"]],
+            "accepted": [],
+        }
+        mapping = id_permutation(structural_ids(surrogate), seed=draw_seed)
+        altered = relabel_probe(surrogate, mapping)
+        target = example["assistant"]["tool_calls"][0]["function"]["arguments"].get(
+            "bid"
+        )
+        if target is not None and mapping[target] == target:
+            raise ValueError("Training target ID was not randomized")
+        digest = hashlib.sha256(
+            json.dumps(mapping, sort_keys=True).encode()
+        ).hexdigest()
+        augmented.append(
+            {
+                **copy.deepcopy(example),
+                "messages": altered["messages"][:-1],
+                "assistant": altered["messages"][-1],
+                "id_mapping_sha256": digest,
+                "id_permutation_seed": draw_seed,
+            }
+        )
+        hashes.append((example["task_seed"], example["turn"], digest))
+    policy = {
+        "type": "structural ID permutation within character widths",
+        "seed": seed,
+        "draw_seed": "seed + task_seed * 16 + turn",
+        "implementation_sha256": hashlib.sha256(
+            Path(__file__).read_bytes()
+        ).hexdigest(),
+        "mappings_sha256": hashlib.sha256(
+            json.dumps(sorted(hashes)).encode()
+        ).hexdigest(),
+    }
+    return augmented, policy

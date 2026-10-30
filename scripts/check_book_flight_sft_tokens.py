@@ -10,6 +10,7 @@ from collections import Counter
 from pathlib import Path
 
 from browser_control import book_flight_sft
+from browser_control.book_flight_ids import augment_training_examples
 from browser_control.book_flight_sft import encode_example, expert_examples
 from browser_control.lfm3 import MODEL_ID, MODEL_REVISION
 
@@ -21,6 +22,7 @@ def main() -> None:
     parser.add_argument("--corpus", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--records", type=Path)
+    parser.add_argument("--id-permutation-seed", type=int)
     args = parser.parse_args()
     if args.output.exists():
         parser.error("Preserve prior token-validation evidence")
@@ -30,6 +32,11 @@ def main() -> None:
     examples = [example for r in corpus["records"] for example in expert_examples(r)]
     if not examples or examples != corpus["examples"]:
         parser.error("Expected nonempty clean expert examples from training seeds")
+    augmentation = None
+    if args.id_permutation_seed is not None:
+        examples, augmentation = augment_training_examples(
+            examples, seed=args.id_permutation_seed
+        )
     tokenizer = AutoTokenizer.from_pretrained(
         MODEL_ID, revision=MODEL_REVISION, trust_remote_code=True
     )
@@ -44,6 +51,7 @@ def main() -> None:
             raise ValueError("Current-call labels must end at EOS")
     report = {
         "status": "passed",
+        "id_augmentation": augmentation,
         "model": MODEL_ID,
         "revision": MODEL_REVISION,
         "examples": len(encoded),

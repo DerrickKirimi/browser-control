@@ -5,6 +5,7 @@ from copy import deepcopy
 import pytest
 
 from browser_control.book_flight_ids import (
+    augment_training_examples,
     compare_id_scores,
     id_permutation,
     relabel_probe,
@@ -126,3 +127,51 @@ def test_incomplete_id_comparison_cannot_pass_gate():
     incomplete = {"skills": {"select_origin": {"count": 19, "correct": 19}}}
     with pytest.raises(ValueError, match="20 matched"):
         compare_id_scores(incomplete, incomplete)
+
+
+def training_example(seed=100, turn=5):
+    return {
+        "task_seed": seed,
+        "turn": turn,
+        "skill": "choose_date",
+        "messages": probe()["messages"],
+        "assistant": {
+            "role": "assistant",
+            "tool_calls": [{"function": {"name": "click", "arguments": {"bid": "34"}}}],
+        },
+    }
+
+
+def test_training_augmentation_relabels_current_target_and_full_history():
+    import re
+
+    example = training_example()
+    original = deepcopy(example)
+    rows, policy = augment_training_examples([example], seed=23)
+    (current,) = rows
+    content = current["messages"][0]["content"]
+    target = re.search(r"\[([0-9]+)\] link '25'", content)[1]
+    assert target != "34"
+    assert (
+        current["assistant"]["tool_calls"][0]["function"]["arguments"]["bid"] == target
+    )
+    assert (
+        current["messages"][1]["tool_calls"][0]["function"]["arguments"]["value"]
+        == "Airport 27"
+    )
+    assert example == original
+    assert policy["seed"] == 23
+
+
+def test_training_augmentation_is_independent_of_sample_order():
+    examples = [training_example(100), training_example(101)]
+    first, policy_a = augment_training_examples(examples, seed=23)
+    second, policy_b = augment_training_examples(examples[::-1], seed=23)
+    assert first == second[::-1]
+    assert policy_a == policy_b
+
+
+def test_training_augmentation_cannot_use_development_or_reserved_seeds():
+    for seed in (30, 10000, 10100):
+        with pytest.raises(ValueError, match="only training"):
+            augment_training_examples([training_example(seed)], seed=23)
