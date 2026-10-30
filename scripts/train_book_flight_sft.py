@@ -193,7 +193,7 @@ def main() -> None:
     try:
         evaluate("before")
         torch.manual_seed(23)
-        model = get_peft_model(policy.model, LoraConfig(**LORA))
+        model = get_peft_model(policy.model, LoraConfig(**LORA, revision=MODEL_REVISION))
         policy.model = model
         model.config.use_cache = False
         model.train()
