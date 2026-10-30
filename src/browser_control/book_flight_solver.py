@@ -80,6 +80,7 @@ def solve(env, seed: int) -> dict:
                 {
                     "skill": skill,
                     "action": action.render(),
+                    "assistant": action.message(),
                     "observation": asdict(before),
                     "messages": list(messages),
                     "reward": state.reward,

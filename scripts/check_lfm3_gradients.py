@@ -11,7 +11,8 @@ from pathlib import Path
 
 from preflight_lfm3_attention import LONG_PROMPT_TOKENS, LORA, load, lora_attempt
 
-from browser_control.book_flight import BOOK_FLIGHT_TOOLS, BookFlightAction
+from browser_control.book_flight import BookFlightAction
+from browser_control.book_flight_sft import encode_example
 from browser_control.lfm3 import MODEL_ID, MODEL_REVISION
 
 
@@ -34,6 +35,12 @@ def main() -> None:
     args = parser.parse_args()
     if args.output.exists():
         parser.error("Preserve the existing report; use a new output path")
+    source_path = Path("source-manifest.json")
+    source = json.loads(source_path.read_text()) if source_path.exists() else None
+    if source is not None:
+        for name, expected in source["files_sha256"].items():
+            if hashlib.sha256(Path(name).read_bytes()).hexdigest() != expected:
+                raise ValueError(f"Source hash mismatch: {name}")
     records = [
         r
         for r in json.loads(args.records.read_text())
@@ -65,6 +72,7 @@ def main() -> None:
             break
     report = {
         "status": "running",
+        "source_snapshot": source,
         "update_passed": False,
         "model": MODEL_ID,
         "revision": MODEL_REVISION,
@@ -98,21 +106,11 @@ def main() -> None:
         ("observed-long", longest, True),
         ("synthetic-12k", stress, True),
     ):
-        prefix = policy.encode(prompt)["input_ids"]
-        full = policy.tokenizer.apply_chat_template(
-            [*prompt, action],
-            tools=BOOK_FLIGHT_TOOLS,
-            enable_thinking=False,
-            add_generation_prompt=False,
-            tokenize=True,
-            return_dict=True,
-            return_tensors="pt",
-        )["input_ids"].to("cuda:0")
-        if not torch.equal(full[:, : prefix.shape[-1]], prefix):
-            raise ValueError("Chat template prefix changed; target mask is invalid")
-        target_length = full.shape[-1] - prefix.shape[-1]
-        if target_length <= 0 or full[0, -1].item() != policy.tokenizer.eos_token_id:
-            raise ValueError("Expected a nonempty canonical tool call ending in EOS")
+        encoded = encode_example(
+            policy.tokenizer, {"messages": prompt, "assistant": action}
+        )
+        full = torch.tensor([encoded["input_ids"]], device="cuda:0")
+        target_length = encoded["target_tokens"]
         for scale in (65536.0, 128.0, 1.0):
             row = lora_attempt(
                 policy, model, full, target_length, checkpointing, initial_scale=scale
