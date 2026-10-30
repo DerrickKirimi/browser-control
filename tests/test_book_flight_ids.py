@@ -10,6 +10,7 @@ from browser_control.book_flight_ids import (
     id_permutation,
     relabel_probe,
     structural_ids,
+    validate_probe_pair,
 )
 
 
@@ -175,3 +176,37 @@ def test_training_augmentation_cannot_use_development_or_reserved_seeds():
     for seed in (30, 10000, 10100):
         with pytest.raises(ValueError, match="only training"):
             augment_training_examples([training_example(seed)], seed=23)
+
+
+def paired_probes():
+    original = {"probes": [probe()]}
+    mapping = id_permutation(structural_ids(probe()), seed=23)
+    altered = {
+        "source_sha256": "fixture",
+        "permutation_seed": 23,
+        "probes": [relabel_probe(probe(), mapping)],
+        "mappings": [{"probe_index": 0, "mapping": mapping}],
+    }
+    return original, altered
+
+
+def test_shared_paired_control_validation_accepts_exact_transform():
+    original, altered = paired_probes()
+    validate_probe_pair(original, altered, original_sha256="fixture")
+
+
+@pytest.mark.parametrize("change", ["source", "goal", "vocabulary", "draw"])
+def test_shared_paired_control_validation_rejects_drift(change):
+    original, altered = paired_probes()
+    if change == "source":
+        altered["source_sha256"] = "other"
+    elif change == "goal":
+        altered["probes"][0]["goal"] = "changed task"
+    elif change == "vocabulary":
+        altered["mappings"][0]["mapping"]["25"] = "999"
+    else:
+        altered["mappings"][0]["mapping"] = {
+            bid: bid for bid in structural_ids(probe())
+        }
+    with pytest.raises(ValueError):
+        validate_probe_pair(original, altered, original_sha256="fixture")

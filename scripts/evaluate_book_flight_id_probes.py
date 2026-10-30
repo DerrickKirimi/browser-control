@@ -16,7 +16,7 @@ from browser_control.book_flight_diagnostic import (
     score_probe,
     summarize_probes,
 )
-from browser_control.book_flight_ids import compare_id_scores, relabel_probe
+from browser_control.book_flight_ids import compare_id_scores, validate_probe_pair
 from browser_control.book_flight_sft import TRAINING_SEEDS, expert_examples
 from browser_control.lfm3 import MODEL_REVISION, LFM3Policy
 from browser_control.manifest import RunManifest
@@ -36,20 +36,17 @@ def main():
         parser.error("Preserve the previous evaluation")
     source = json.loads(args.probes.read_text())
     altered = json.loads(args.permuted_probes.read_text())
-    if altered["source_sha256"] != hashlib.sha256(args.probes.read_bytes()).hexdigest():
-        parser.error("Permuted probes do not derive from this exact original set")
+    validate_probe_pair(
+        source,
+        altered,
+        original_sha256=hashlib.sha256(args.probes.read_bytes()).hexdigest(),
+    )
     probes = source["probes"]
     if len(probes) != len(altered["probes"]) or len(probes) != len(altered["mappings"]):
         parser.error("Paired probe lengths differ")
-    for index, (original, permuted) in enumerate(
-        zip(probes, altered["probes"], strict=True)
-    ):
+    for original in probes:
         if original["task_seed"] not in DEVELOPMENT_SEEDS:
             parser.error("Only fixed development probes are allowed")
-        if relabel_probe(original, altered["mappings"][index]["mapping"]) != permuted:
-            parser.error(
-                "Permuted prompt changes more than its declared structural IDs"
-            )
     adapter_config = json.loads((args.adapter / "adapter_config.json").read_text())
     if adapter_config.get("revision") not in (None, MODEL_REVISION):
         parser.error("Adapter config names a different base revision")

@@ -179,3 +179,34 @@ def augment_training_examples(
         ).hexdigest(),
     }
     return augmented, policy
+
+
+def validate_probe_pair(original: dict, altered: dict, *, original_sha256: str) -> None:
+    """Require the declared structural-only, width-preserving paired control."""
+    if altered["source_sha256"] != original_sha256:
+        raise ValueError("Permuted probes do not match the exact original source")
+    rows = original["probes"]
+    if len(rows) != len(altered["probes"]) or len(rows) != len(altered["mappings"]):
+        raise ValueError("Paired probe lengths differ")
+    for index, (before, after) in enumerate(zip(rows, altered["probes"], strict=True)):
+        mapping_row = altered["mappings"][index]
+        mapping = mapping_row["mapping"]
+        ids = structural_ids(before)
+        if mapping_row["probe_index"] != index:
+            raise ValueError("Permutation mapping order differs from probe order")
+        if set(mapping) != ids or set(mapping.values()) != ids:
+            raise ValueError(
+                "Permutation must reuse the exact structural ID vocabulary"
+            )
+        if any(len(key) != len(value) for key, value in mapping.items()):
+            raise ValueError("Permutation must preserve ID character widths")
+        if mapping != id_permutation(ids, seed=altered["permutation_seed"] + index):
+            raise ValueError("Permutation does not match its declared draw seed")
+        if any(
+            mapping[call["parameters"]["bid"]] == call["parameters"]["bid"]
+            for call in before["accepted"]
+            if "bid" in call["parameters"]
+        ):
+            raise ValueError("An accepted target ID was not permuted")
+        if relabel_probe(before, mapping) != after:
+            raise ValueError("Permuted probe changes data outside structural IDs")

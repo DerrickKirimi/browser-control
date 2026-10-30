@@ -5,7 +5,6 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-import random
 import time
 from dataclasses import asdict
 from pathlib import Path
@@ -13,24 +12,33 @@ from pathlib import Path
 from preflight_lfm3_attention import LORA, load
 
 from browser_control import book_flight_sft, book_flight_solver
+from browser_control.book_flight_curriculum import (
+    plan_examples,
+    validate_initial_adapter,
+)
 from browser_control.book_flight_diagnostic import (
     DEVELOPMENT_SEEDS,
     SAMPLING_128,
+    build_probes,
     score_probe,
     summarize_probes,
     summarize_rollouts,
 )
 from browser_control.book_flight_evaluation import collect_book_flight_episode
-from browser_control.book_flight_ids import augment_training_examples
+from browser_control.book_flight_ids import (
+    augment_training_examples,
+    compare_id_scores,
+    validate_probe_pair,
+)
 from browser_control.book_flight_sft import encode_example, expert_examples
-from browser_control.lfm3 import MODEL_REVISION
+from browser_control.lfm3 import MODEL_ID, MODEL_REVISION
 from browser_control.local_browsergym import LocalBrowserGymEnvironment
 from browser_control.manifest import RunManifest
 from browser_control.miniwob_assets import MiniwobAssetServer, ensure_miniwob_assets
 
 
 def main() -> None:
-    from peft import LoraConfig, get_peft_model
+    from peft import LoraConfig, PeftModel, get_peft_model
 
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--corpus", type=Path, required=True)
@@ -41,6 +49,11 @@ def main() -> None:
     parser.add_argument("--updates", type=int, default=16)
     parser.add_argument("--accumulation", type=int, default=4)
     parser.add_argument("--id-permutation-seed", type=int)
+    parser.add_argument("--permuted-probes", type=Path)
+    parser.add_argument("--initial-adapter", type=Path)
+    parser.add_argument("--focus-skills", nargs="+")
+    parser.add_argument("--passes", type=int, default=1)
+    parser.add_argument("--seen-training-fit", action="store_true")
     args = parser.parse_args()
     if args.updates <= 0 or args.accumulation <= 0:
         parser.error("updates and accumulation must be positive")
@@ -82,12 +95,19 @@ def main() -> None:
         )
     if tokens.get("id_augmentation") != augmentation:
         parser.error("Token validation must match the exact ID augmentation policy")
+    if augmentation is not None and (args.focus_skills or args.passes != 1):
+        parser.error("ID augmentation currently supports one full-corpus pass only")
+    examples = plan_examples(examples, skills=args.focus_skills, passes=args.passes)
     needed = args.updates * args.accumulation
     if needed > len(examples):
-        parser.error("Pilot must not repeat examples; collect more or reduce updates")
+        parser.error("Run exceeds the explicitly configured example/pass budget")
     run_label = (
-        "id-randomized"
+        "adapter-continuation"
+        if args.initial_adapter is not None
+        else "id-randomized"
         if augmentation is not None
+        else "multi-pass"
+        if args.passes > 1
         else "corpus-pass"
         if len(examples) - needed < args.accumulation
         else "pilot"
@@ -95,6 +115,31 @@ def main() -> None:
     probes = json.loads(args.probes.read_text())["probes"]
     if any(probe["task_seed"] not in DEVELOPMENT_SEEDS for probe in probes):
         parser.error("Skill probes must use development seeds only")
+    permuted_probes = None
+    if args.permuted_probes is not None:
+        original = json.loads(args.probes.read_text())
+        altered = json.loads(args.permuted_probes.read_text())
+        validate_probe_pair(
+            original,
+            altered,
+            original_sha256=hashlib.sha256(args.probes.read_bytes()).hexdigest(),
+        )
+        permuted_probes = altered["probes"]
+    elif augmentation is not None:
+        parser.error("ID-randomized SFT requires the matched permutation evaluation")
+    initial_adapter = None
+    if args.initial_adapter is not None:
+        adapter_path = args.initial_adapter / "adapter_config.json"
+        adapter_config = json.loads(adapter_path.read_text())
+        validate_initial_adapter(
+            adapter_config, LORA, revision=MODEL_REVISION, model_id=MODEL_ID
+        )
+        initial_adapter = {
+            "config_sha256": hashlib.sha256(adapter_path.read_bytes()).hexdigest(),
+            "weights_sha256": hashlib.sha256(
+                (args.initial_adapter / "adapter_model.safetensors").read_bytes()
+            ).hexdigest(),
+        }
     source = Path("source-manifest.json")
     snapshot = json.loads(source.read_text()) if source.exists() else None
     if snapshot is not None:
@@ -102,10 +147,14 @@ def main() -> None:
             if hashlib.sha256(Path(name).read_bytes()).hexdigest() != expected:
                 raise ValueError(f"Source hash mismatch: {name}")
     policy = load("sdpa")
+    if args.initial_adapter is not None:
+        policy.model = PeftModel.from_pretrained(
+            policy.model, args.initial_adapter, is_trainable=True
+        )
+        policy.model.peft_config["default"].revision = MODEL_REVISION
     policy.max_prompt_tokens = 16384
     torch = policy.torch
     torch.manual_seed(23)
-    random.Random(23).shuffle(examples)
     encoded = [
         encode_example(policy.tokenizer, example) for example in examples[:needed]
     ]
@@ -118,6 +167,10 @@ def main() -> None:
         "config": {
             "seed": 23,
             "run_label": run_label,
+            "focus_skills": args.focus_skills,
+            "passes": args.passes,
+            "initial_adapter": initial_adapter,
+            "optimizer_state": "fresh",
             "id_augmentation": augmentation,
             "updates": args.updates,
             "accumulation": args.accumulation,
@@ -153,6 +206,7 @@ def main() -> None:
                     "skill",
                     "id_mapping_sha256",
                     "id_permutation_seed",
+                    "pass_index",
                 )
                 if k in example
             }
@@ -171,6 +225,13 @@ def main() -> None:
     report["manifest"] = RunManifest(
         f"lfm3-book-flight-sft-{run_label}", 23, report["config"]
     ).to_dict()
+    if args.permuted_probes is not None:
+        report["inputs_sha256"]["permuted_probes"] = hashlib.sha256(
+            args.permuted_probes.read_bytes()
+        ).hexdigest()
+        report["permuted_after"] = []
+    if args.seen_training_fit:
+        report["seen_training_after"] = []
     report_path = args.output_dir / "training.json"
 
     def save():
@@ -223,8 +284,12 @@ def main() -> None:
     try:
         evaluate("before")
         torch.manual_seed(23)
-        model = get_peft_model(
-            policy.model, LoraConfig(**LORA, revision=MODEL_REVISION)
+        model = (
+            policy.model
+            if args.initial_adapter is not None
+            else get_peft_model(
+                policy.model, LoraConfig(**LORA, revision=MODEL_REVISION)
+            )
         )
         policy.model = model
         model.config.use_cache = False
@@ -237,6 +302,13 @@ def main() -> None:
             raise ValueError("Only LoRA parameters may be trainable")
         report["trainable_tensors"] = len(trainable)
         report["trainable_parameters"] = sum(p.numel() for p in trainable.values())
+        if (
+            report["trainable_tensors"] != gate["trainable_tensors"]
+            or report["trainable_parameters"] != gate["trainable_parameters"]
+        ):
+            raise ValueError(
+                "Trainable adapter shape differs from the finite-update gate"
+            )
         report["adapter_dtypes"] = sorted({str(p.dtype) for p in trainable.values()})
         save()
         before = {name: p.detach().cpu().clone() for name, p in trainable.items()}
@@ -271,6 +343,7 @@ def main() -> None:
                         "update": update + 1,
                         "task_seed": metadata["task_seed"],
                         "turn": metadata["turn"],
+                        "pass_index": metadata["pass_index"],
                         "skill": metadata["skill"],
                         "loss": loss.item(),
                         "target_tokens": target_length,
@@ -332,6 +405,51 @@ def main() -> None:
         model.gradient_checkpointing_disable()
         torch.cuda.empty_cache()
         evaluate("after")
+        if permuted_probes is not None:
+            for index, probe in enumerate(permuted_probes):
+                seed = 100000 + probe["task_seed"] * 16 + index
+                output = policy.generate(probe["messages"], seed=seed)
+                report["permuted_after"].append(
+                    {
+                        "task_seed": probe["task_seed"],
+                        "skill": probe["skill"],
+                        "prior_error": probe["prior_error"],
+                        "generation_seed": seed,
+                        **asdict(output),
+                        **score_probe(probe, output.text, "strict"),
+                    }
+                )
+                save()
+            report["permuted_after_summary"] = summarize_probes(
+                report["permuted_after"]
+            )
+            report["id_sensitivity_decision"] = compare_id_scores(
+                report["after_summary"], report["permuted_after_summary"]
+            )
+        if args.seen_training_fit:
+            seen = [
+                probe
+                for record in corpus["records"]
+                for probe in build_probes(record)
+                if args.focus_skills is None or probe["skill"] in args.focus_skills
+            ]
+            for index, probe in enumerate(seen):
+                seed = 100000 + probe["task_seed"] * 16 + index
+                output = policy.generate(probe["messages"], seed=seed)
+                report["seen_training_after"].append(
+                    {
+                        "task_seed": probe["task_seed"],
+                        "skill": probe["skill"],
+                        "prior_error": probe["prior_error"],
+                        "generation_seed": seed,
+                        **asdict(output),
+                        **score_probe(probe, output.text, "strict"),
+                    }
+                )
+                save()
+            report["seen_training_after_summary"] = summarize_probes(
+                report["seen_training_after"]
+            )
         report["status"] = "complete"
     except BaseException as error:
         report.update(status="failed", error=f"{type(error).__name__}: {error}"[:1000])
