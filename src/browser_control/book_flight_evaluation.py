@@ -8,6 +8,7 @@ from typing import Any
 
 from browser_control.actions import InvalidActionError
 from browser_control.book_flight import (
+    SYSTEM_PROMPT,
     initial_messages,
     observation_text,
     parse_book_flight_action,
@@ -23,11 +24,13 @@ def collect_book_flight_episode(
     *,
     max_steps: int = 15,
     numerical_check: Callable | None = None,
+    parse_output: Callable = parse_book_flight_action,
+    system_prompt: str = SYSTEM_PROMPT,
 ) -> dict[str, Any]:
     if not 1 <= max_steps <= 15:
         raise ValueError("max_steps must be in 1..15")
     state = environment.reset(seed=task_seed)
-    messages = initial_messages(state.observation)
+    messages = initial_messages(state.observation, system_prompt)
     record = {
         "task_seed": task_seed,
         "goal": state.observation.goal,
@@ -59,7 +62,7 @@ def collect_book_flight_episode(
         event.update(asdict(output))
         record["steps"].append(event)
         try:
-            action = parse_book_flight_action(output.text)
+            action = parse_output(output.text)
         except InvalidActionError as error:
             event.update(valid_action=False, error=str(error))
             record["stop_reason"] = "invalid-action"
@@ -84,6 +87,7 @@ def collect_book_flight_episode(
         messages.append(
             {"role": "tool", "content": observation_text(state.observation)}
         )
+    record["final_observation"] = asdict(state.observation)
     record["model_turns"] = sum("text" in event for event in record["steps"])
     record["success_after_action_error"] = (
         record["success"] and record["action_errors"] > 0

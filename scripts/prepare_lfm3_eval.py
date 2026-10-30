@@ -23,6 +23,8 @@ def main() -> None:
             root / "scripts/check_lfm3_trl_contract.py",
             root / "scripts/check_lfm3_prefill.py",
             root / "scripts/check_lfm3_numerics.py",
+            root / "scripts/diagnose_book_flight.py",
+            root / "scripts/preflight_lfm3_attention.py",
             root / "scripts/colab_lfm3_frozen.py",
             root / "requirements-lfm3.txt",
             root / "pyproject.toml",

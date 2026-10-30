@@ -112,9 +112,15 @@ class LFM3Policy:
     revision: str = MODEL_REVISION
     tools: list[dict[str, Any]] | None = None
     max_prompt_tokens: int | None = None
+    enable_thinking: bool = False
 
     @classmethod
-    def load(cls, decoder: DecoderConfig, interface: str) -> LFM3Policy:
+    def load(
+        cls,
+        decoder: DecoderConfig,
+        interface: str,
+        attn_implementation: str = "eager",
+    ) -> LFM3Policy:
         import torch
         from transformers import AutoModelForCausalLM, AutoTokenizer, GenerationConfig
 
@@ -133,7 +139,7 @@ class LFM3Policy:
                 revision=MODEL_REVISION,
                 trust_remote_code=True,
                 dtype=getattr(torch, device.training_dtype),
-                attn_implementation="eager",
+                attn_implementation=attn_implementation,
             )
             .to("cuda:0")
             .eval()
@@ -157,7 +163,7 @@ class LFM3Policy:
         encoded = self.tokenizer.apply_chat_template(
             messages,
             **kwargs,
-            enable_thinking=False,
+            enable_thinking=self.enable_thinking,
             add_generation_prompt=True,
             tokenize=True,
             return_dict=True,

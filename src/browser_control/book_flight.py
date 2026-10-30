@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 from browser_control.actions import InvalidActionError, parse_click_test_action
@@ -76,6 +76,7 @@ SYSTEM_PROMPT = (
 class BookFlightAction:
     name: str
     parameters: dict[str, str]
+    reasoning: str | None = None
 
     def render(self) -> str:
         if self.name in {"click", "noop"}:
@@ -93,7 +94,7 @@ class BookFlightAction:
         return f"press({bid!r}, {self.parameters['key']!r})"
 
     def message(self) -> dict[str, Any]:
-        return {
+        message: dict[str, Any] = {
             "role": "assistant",
             "tool_calls": [
                 {
@@ -102,6 +103,9 @@ class BookFlightAction:
                 }
             ],
         }
+        if self.reasoning is not None:
+            message["reasoning_content"] = self.reasoning
+        return message
 
 
 def parse_book_flight_action(output: str) -> BookFlightAction:
@@ -142,13 +146,23 @@ def parse_book_flight_action(output: str) -> BookFlightAction:
     return action
 
 
+def parse_reasoned_action(output: str) -> BookFlightAction:
+    """Accept reasoning closed by one </think>, then exactly one permitted call."""
+    if output.count("</think>") != 1:
+        raise InvalidActionError("expected reasoning closed by exactly one </think>")
+    reasoning, call = output.split("</think>")
+    return replace(parse_book_flight_action(call), reasoning=reasoning)
+
+
 def observation_text(observation: BrowserObservation) -> str:
     error = observation.last_action_error or "none"
     return f"Goal: {observation.goal}\nLast action error: {error}\nAccessibility tree:\n{observation.accessibility_tree}"
 
 
-def initial_messages(observation: BrowserObservation) -> list[dict[str, Any]]:
+def initial_messages(
+    observation: BrowserObservation, system_prompt: str = SYSTEM_PROMPT
+) -> list[dict[str, Any]]:
     return [
-        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "system", "content": system_prompt},
         {"role": "user", "content": observation_text(observation)},
     ]
