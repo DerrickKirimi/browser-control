@@ -93,6 +93,7 @@ def main():
 
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--lora", action="store_true")
     args = parser.parse_args()
     if args.output.exists():
         parser.error("Preserve earlier contract evidence")
@@ -121,6 +122,23 @@ def main():
     model.generation_config = GenerationConfig(
         pad_token_id=0, eos_token_id=99, bos_token_id=1, top_k=0
     )
+    if args.lora:
+        from peft import LoraConfig, get_peft_model
+
+        model = get_peft_model(
+            model,
+            LoraConfig(
+                r=2,
+                lora_alpha=4,
+                lora_dropout=0.0,
+                target_modules=["q_proj", "v_proj"],
+                task_type="CAUSAL_LM",
+            ),
+        )
+        if any(
+            "lora_" not in n for n, p in model.named_parameters() if p.requires_grad
+        ):
+            raise ValueError("CPU adapter check must train only LoRA parameters")
     # Separately exercise the actual score-producing sampler on real model output.
     sampler = TransformersTokenSampler(
         model.eval(),
@@ -129,6 +147,26 @@ def main():
         DecoderConfig("contract", True, 8, temperature=1.0, top_p=0.95),
     )
     sampled = sampler.sample((10, 11), seed=23)
+    # Independently reconstruct top-p probabilities from full-prefix forwards.
+    # These are sampling probabilities, not TRL's unprocessed policy logprobs.
+    context = [10, 11]
+    errors = []
+    with torch.inference_mode():
+        for token, observed in zip(
+            sampled.token_ids, sampled.sampling_logprobs, strict=True
+        ):
+            logits = model(input_ids=torch.tensor([context])).logits[0, -1].float()
+            sorted_logits, indices = logits.sort()
+            remove = sorted_logits.softmax(-1).cumsum(-1) <= 0.05
+            remove[-1] = False
+            logits[indices[remove]] = -torch.inf
+            expected = logits.log_softmax(-1)[token].item()
+            errors.append(abs(expected - observed))
+            context.append(token)
+    if max(errors) > 1e-5:
+        raise ValueError(
+            "Recorded sampling probabilities do not match processed top-p scores"
+        )
     before = {n: p.detach().clone() for n, p in model.named_parameters()}
     rollout = BookFlightRollout(
         FixtureEnvironment(), FixtureTokenizer(), lambda m: FixtureSampler()
@@ -216,6 +254,14 @@ def main():
     changed = sum(
         not torch.equal(p.detach(), before[n]) for n, p in model.named_parameters()
     )
+    if any(not torch.isfinite(p).all() for p in model.parameters()):
+        raise ValueError("Nonfinite parameter after CPU integration updates")
+    if any(
+        not torch.equal(p.detach(), before[n])
+        for n, p in model.named_parameters()
+        if not p.requires_grad
+    ):
+        raise ValueError("Frozen model parameters changed")
     if trainer.state.global_step != 2 or len(checks) != 2 or not changed:
         raise ValueError("Expected two genuine trainer optimizer updates")
     if any(not row.get("external_gradients_zero") for row in checks):
@@ -236,6 +282,8 @@ def main():
         "scope": "tiny CPU model and scripted environment/actions; not LFM3/browser training",
         "trainer_steps": trainer.state.global_step,
         "changed_parameter_tensors": changed,
+        "adapter_only": args.lora,
+        "script_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
         "packages": {
             name: importlib.metadata.version(name)
             for name in ("torch", "transformers", "trl", "accelerate", "datasets")
@@ -244,9 +292,12 @@ def main():
             Path(inspect.getfile(trl.GRPOTrainer)).read_bytes()
         ).hexdigest(),
         "sampler_tokens": len(sampled.token_ids),
+        "sampling_logprob_max_error": max(errors),
         "checks": checks,
         "episodes": rollout.episodes,
     }
+    if args.lora:
+        report["packages"]["peft"] = importlib.metadata.version("peft")
     args.output.write_text(json.dumps(report, indent=2, allow_nan=False) + "\n")
     print(
         "Passed: real TRL custom rollout, grouped rewards, external masks, gradients and two updates"
