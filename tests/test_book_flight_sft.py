@@ -66,9 +66,12 @@ class Tokenizer:
     def apply_chat_template(self, messages, *, add_generation_prompt, **kwargs):
         assert not kwargs["enable_thinking"]
         assert kwargs["tools"]
-        return (
-            [10, 11, 12, 13] if add_generation_prompt else [10, 11, 12, 13, 20, 21, 99]
-        )
+        assert kwargs["return_dict"]
+        return {
+            "input_ids": [10, 11, 12, 13]
+            if add_generation_prompt
+            else [10, 11, 12, 13, 20, 21, 99]
+        }
 
 
 def test_only_current_call_and_eos_receive_labels():
@@ -86,11 +89,13 @@ def test_long_examples_fail_instead_of_truncating():
 def test_template_newline_after_eos_is_not_supervised():
     class NewlineTokenizer(Tokenizer):
         def apply_chat_template(self, messages, *, add_generation_prompt, **kwargs):
-            return (
-                [10, 11, 12, 13]
-                if add_generation_prompt
-                else [10, 11, 12, 13, 20, 99, 22]
-            )
+            return {
+                "input_ids": (
+                    [10, 11, 12, 13]
+                    if add_generation_prompt
+                    else [10, 11, 12, 13, 20, 99, 22]
+                )
+            }
 
     result = encode_example(NewlineTokenizer(), expert_examples(record())[0])
     assert result["labels"] == [-100, -100, -100, -100, 20, 99]
@@ -100,7 +105,7 @@ def test_template_newline_after_eos_is_not_supervised():
 def test_prefix_changes_and_missing_eos_are_rejected(full):
     class BrokenTokenizer(Tokenizer):
         def apply_chat_template(self, messages, *, add_generation_prompt, **kwargs):
-            return [10, 11, 12, 13] if add_generation_prompt else full
+            return {"input_ids": [10, 11, 12, 13] if add_generation_prompt else full}
 
     with pytest.raises(ValueError):
         encode_example(BrokenTokenizer(), expert_examples(record())[0])

@@ -28,6 +28,7 @@ def main() -> None:
             root / "scripts/check_lfm3_gradients.py",
             root / "scripts/collect_book_flight_experts.py",
             root / "scripts/train_book_flight_sft.py",
+            root / "scripts/check_book_flight_sft_tokens.py",
             root / "scripts/colab_lfm3_frozen.py",
             root / "requirements-lfm3.txt",
             root / "pyproject.toml",

@@ -12,7 +12,7 @@ from pathlib import Path
 
 from preflight_lfm3_attention import LORA, load
 
-from browser_control import book_flight_solver
+from browser_control import book_flight_sft, book_flight_solver
 from browser_control.book_flight_diagnostic import (
     DEVELOPMENT_SEEDS,
     SAMPLING_128,
@@ -34,6 +34,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--corpus", type=Path, required=True)
     parser.add_argument("--gradient-report", type=Path, required=True)
+    parser.add_argument("--token-report", type=Path, required=True)
     parser.add_argument("--probes", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--updates", type=int, default=16)
@@ -49,6 +50,19 @@ def main() -> None:
     if gate["lora"] != LORA or gate["attention"] != "sdpa":
         parser.error("Finite-update gate used a different training configuration")
     corpus = json.loads(args.corpus.read_text())
+    tokens = json.loads(args.token_report.read_text())
+    encoder_path = Path(book_flight_sft.__file__)
+    if (
+        tokens["status"] != "passed"
+        or tokens["revision"] != MODEL_REVISION
+        or tokens["corpus_sha256"]
+        != hashlib.sha256(args.corpus.read_bytes()).hexdigest()
+        or tokens["encoder_sha256"]
+        != hashlib.sha256(encoder_path.read_bytes()).hexdigest()
+    ):
+        parser.error(
+            "Passing token validation must match the exact corpus and label encoder"
+        )
     solver_hash = hashlib.sha256(
         Path(book_flight_solver.__file__).read_bytes()
     ).hexdigest()
@@ -108,6 +122,7 @@ def main() -> None:
             for name, path in (
                 ("corpus", args.corpus),
                 ("gradient_report", args.gradient_report),
+                ("token_report", args.token_report),
                 ("probes", args.probes),
             )
         },

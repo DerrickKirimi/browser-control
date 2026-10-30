@@ -44,15 +44,17 @@ def encode_example(tokenizer: Any, example: dict, *, max_tokens: int = 16384) ->
     labels. Prefix equality is checked rather than inferred from string lengths.
     No packing, padding or truncation changes the conversation boundary.
     """
-    kwargs = dict(tools=BOOK_FLIGHT_TOOLS, enable_thinking=False, tokenize=True)
+    kwargs = dict(
+        tools=BOOK_FLIGHT_TOOLS, enable_thinking=False, tokenize=True, return_dict=True
+    )
     prompt = tokenizer.apply_chat_template(
         example["messages"], **kwargs, add_generation_prompt=True
-    )
+    )["input_ids"]
     full = tokenizer.apply_chat_template(
         [*example["messages"], example["assistant"]],
         **kwargs,
         add_generation_prompt=False,
-    )
+    )["input_ids"]
     if full[: len(prompt)] != prompt:
         raise ValueError("Chat template prefix mismatch")
     try:

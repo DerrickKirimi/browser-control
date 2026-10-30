@@ -26,6 +26,41 @@ def json_safe(value):
     return value
 
 
+def gradient_cases(tokenizer, records):
+    short = records[0]["steps"][0]["messages"]
+    longest = max(
+        (step["messages"] for record in records for step in record["steps"]),
+        key=lambda messages: len(json.dumps(messages)),
+    )
+    tree = records[1]["steps"][5]["observation"]["accessibility_tree"]
+    stress = list(longest)
+    for repeats in range(1, 30):
+        stress = [
+            *longest,
+            {
+                "role": "user",
+                "content": "Synthetic memory stress context:\n"
+                + (tree + "\n") * repeats,
+            },
+        ]
+        if (
+            encode_example(
+                tokenizer,
+                {
+                    "messages": stress,
+                    "assistant": BookFlightAction("click", {"bid": "392"}).message(),
+                },
+            )["prompt_tokens"]
+            >= LONG_PROMPT_TOKENS
+        ):
+            break
+    return (
+        ("short-control", short, False),
+        ("observed-long", longest, True),
+        ("synthetic-12k", stress, True),
+    )
+
+
 def main() -> None:
     from peft import LoraConfig, get_peft_model
 
@@ -46,30 +81,12 @@ def main() -> None:
         for r in json.loads(args.records.read_text())
         if r["task"] == "book-flight-nodelay"
     ]
-    short = records[0]["steps"][0]["messages"]
-    longest = max(
-        (step["messages"] for record in records for step in record["steps"]),
-        key=lambda messages: len(json.dumps(messages)),
-    )
     policy = load("sdpa")
     torch = policy.torch
     torch.manual_seed(23)
     model = get_peft_model(policy.model, LoraConfig(**LORA))
     model.config.use_cache = False
     model.train()
-    tree = records[1]["steps"][5]["observation"]["accessibility_tree"]
-    stress = list(longest)
-    for repeats in range(1, 30):
-        stress = [
-            *longest,
-            {
-                "role": "user",
-                "content": "Synthetic memory stress context:\n"
-                + (tree + "\n") * repeats,
-            },
-        ]
-        if policy.encode(stress)["input_ids"].shape[-1] >= LONG_PROMPT_TOKENS:
-            break
     report = {
         "status": "running",
         "source_snapshot": source,
@@ -101,11 +118,7 @@ def main() -> None:
     action = BookFlightAction("click", {"bid": "392"}).message()
     # Short no-checkpoint control isolates loss scaling from checkpointing.
     # Each attempt restores the identical initial adapters, including on errors.
-    for name, prompt, checkpointing in (
-        ("short-control", short, False),
-        ("observed-long", longest, True),
-        ("synthetic-12k", stress, True),
-    ):
+    for name, prompt, checkpointing in gradient_cases(policy.tokenizer, records):
         encoded = encode_example(
             policy.tokenizer, {"messages": prompt, "assistant": action}
         )
