@@ -100,6 +100,8 @@ def main() -> None:
             "labels": "current canonical native call through EOS only",
             "prefill_chunk_size": 512,
             "decoder": asdict(SAMPLING_128),
+            "rollout_task_seeds": list(range(30, 40)),
+            "rollout_max_steps": 15,
         },
         "inputs_sha256": {
             name: hashlib.sha256(path.read_bytes()).hexdigest()
@@ -186,6 +188,10 @@ def main() -> None:
         trainable = {n: p for n, p in model.named_parameters() if p.requires_grad}
         if not trainable or any("lora_" not in name for name in trainable):
             raise ValueError("Only LoRA parameters may be trainable")
+        report["trainable_tensors"] = len(trainable)
+        report["trainable_parameters"] = sum(p.numel() for p in trainable.values())
+        report["adapter_dtypes"] = sorted({str(p.dtype) for p in trainable.values()})
+        save()
         before = {name: p.detach().cpu().clone() for name, p in trainable.items()}
         optimizer = torch.optim.AdamW(trainable.values(), lr=1e-4, weight_decay=0.0)
         scaler = torch.amp.GradScaler("cuda", init_scale=1.0)
