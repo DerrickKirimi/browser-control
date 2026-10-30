@@ -1,0 +1,14 @@
+# Separate runtime: version set from Cookbook 3d0cbcb's LFM3 GRPO notebook.
+# Install the project with --no-deps; do not resolve the legacy model/training extras.
+torch==2.14.1
+torchvision==0.29.1
+torchao==0.18.0
+transformers==5.20.2
+trl==1.16.0
+peft==0.21.2
+accelerate==1.15.0
+datasets==5.1.0
+huggingface-hub==2.3.0
+tokenizers==0.23.3
+safetensors==0.8.0
+browsergym-miniwob==0.14.3

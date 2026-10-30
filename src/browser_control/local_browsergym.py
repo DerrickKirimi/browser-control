@@ -146,8 +146,14 @@ class LocalBrowserGymEnvironment:
         truncated: bool,
         info: Mapping[str, Any],
     ) -> BrowserStep:
-        action_failed = bool(observation.get("last_action_error", False))
-        error = "BrowserGym reported an action error" if action_failed else None
+        raw_error = observation.get("last_action_error", False)
+        error = (
+            raw_error
+            if isinstance(raw_error, str) and raw_error
+            else "BrowserGym reported an action error"
+            if raw_error
+            else None
+        )
         return BrowserStep(
             observation=BrowserObservation(
                 goal=_goal_text(observation),

@@ -8,8 +8,12 @@ from math import sqrt
 from statistics import mean
 from typing import Protocol
 
-from browser_control.actions import InvalidActionError, parse_click_test_action
-from browser_control.environment import BrowserEnvironment
+from browser_control.actions import (
+    InvalidActionError,
+    ParsedAction,
+    parse_click_test_action,
+)
+from browser_control.environment import BrowserEnvironment, BrowserObservation
 from browser_control.prompts import build_click_test_messages
 
 
@@ -56,7 +60,9 @@ class EvaluationReport:
         return payload
 
 
-def wilson_interval(successes: int, samples: int, z: float = 1.959963984540054) -> tuple[float, float]:
+def wilson_interval(
+    successes: int, samples: int, z: float = 1.959963984540054
+) -> tuple[float, float]:
     """Return a two-sided Wilson score interval for a binomial proportion."""
 
     if samples <= 0:
@@ -78,6 +84,11 @@ def evaluate_click_test(
     environment_factory: Callable[[], BrowserEnvironment],
     policy: TextPolicy,
     seeds: Iterable[int],
+    *,
+    message_builder: Callable[
+        [BrowserObservation], list[dict[str, str]]
+    ] = build_click_test_messages,
+    action_parser: Callable[[str], ParsedAction] = parse_click_test_action,
 ) -> EvaluationReport:
     """Evaluate one policy action per seeded click-test episode."""
 
@@ -86,11 +97,9 @@ def evaluate_click_test(
     try:
         for seed in seeds:
             initial = environment.reset(seed=seed)
-            output = policy.generate(
-                build_click_test_messages(initial.observation), seed=seed
-            )
+            output = policy.generate(message_builder(initial.observation), seed=seed)
             try:
-                parsed = parse_click_test_action(output.text)
+                parsed = action_parser(output.text)
             except InvalidActionError as error:
                 episode_results.append(
                     EpisodeResult(
@@ -133,9 +142,7 @@ def evaluate_click_test(
     return EvaluationReport(
         episodes=tuple(episode_results),
         success_rate=mean(result.success for result in episode_results),
-        invalid_action_rate=mean(
-            not result.valid_action for result in episode_results
-        ),
+        invalid_action_rate=mean(not result.valid_action for result in episode_results),
         mean_environment_steps=mean(
             result.environment_steps for result in episode_results
         ),
