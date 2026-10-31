@@ -76,6 +76,7 @@ def main():
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--seeds", nargs="+", type=int, default=[100, 132])
     parser.add_argument("--group-size", type=int, default=2)
+    parser.add_argument("--temperature", type=float, choices=(1.0, 1.5), default=1.0)
     args = parser.parse_args()
     if args.output.exists():
         parser.error("Preserve earlier token-rollout evidence")
@@ -91,7 +92,9 @@ def main():
         revision=MODEL_REVISION,
         model_id=MODEL_ID,
     )
-    decoder = DecoderConfig("token-rollout", True, 128, temperature=1.0, top_p=0.95)
+    decoder = DecoderConfig(
+        "token-rollout", True, 128, temperature=args.temperature, top_p=0.95
+    )
     snapshot_path = Path("source-manifest.json")
     snapshot = json.loads(snapshot_path.read_text()) if snapshot_path.exists() else None
     if snapshot is not None:

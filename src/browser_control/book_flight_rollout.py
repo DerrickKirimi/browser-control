@@ -212,6 +212,30 @@ def native_success_reward(completions, native_success, **kwargs) -> list[float]:
     return [float(success) for success in native_success]
 
 
+def validate_trainer_token_rows(inputs, episodes):
+    """Check actual padded trainer tensors against raw collector IDs and masks."""
+    if not len(inputs["prompt_ids"]):
+        raise ValueError("Expected a nonempty trainer batch")
+    for prompt, prompt_mask, completion, completion_mask, tool_mask in zip(
+        inputs["prompt_ids"],
+        inputs["prompt_mask"],
+        inputs["completion_ids"],
+        inputs["completion_mask"],
+        inputs["tool_mask"],
+        strict=True,
+    ):
+        actual_prompt = prompt[prompt_mask.bool()].tolist()
+        actual_completion = completion[completion_mask.bool()].tolist()
+        actual_mask = tool_mask[completion_mask.bool()].tolist()
+        if not any(
+            actual_prompt == row["prompt_ids"]
+            and actual_completion == row["completion_ids"]
+            and actual_mask == row["env_mask"]
+            for row in episodes
+        ):
+            raise ValueError("Trainer changed collector prompt/completion IDs or masks")
+
+
 class BookFlightRollout:
     """Single-process TRL rollout_func; dataset strings carry reset metadata only.
 

@@ -20,6 +20,7 @@ from browser_control.book_flight_rollout import (
     TokenTurn,
     TransformersTokenSampler,
     native_success_reward,
+    validate_trainer_token_rows,
 )
 from browser_control.environment import BrowserObservation, BrowserStep
 from browser_control.lfm3 import MODEL_ID, MODEL_REVISION
@@ -99,6 +100,8 @@ def main():
     parser.add_argument("--lora", action="store_true")
     parser.add_argument("--architecture", choices=("llama", "lfm3"), default="llama")
     parser.add_argument("--split-groups", action="store_true")
+    parser.add_argument("--num-generations", type=int, choices=(2, 4), default=2)
+    parser.add_argument("--temperature", type=float, choices=(1.0, 1.5), default=1.0)
     args = parser.parse_args()
     if args.output.exists():
         parser.error("Preserve earlier contract evidence")
@@ -182,7 +185,7 @@ def main():
         model.eval(),
         tokenizer,
         torch,
-        DecoderConfig("contract", True, 8, temperature=1.0, top_p=0.95),
+        DecoderConfig("contract", True, 8, temperature=args.temperature, top_p=0.95),
     )
     sampled = sampler.sample((10, 11), seed=23)
     # Independently reconstruct top-p probabilities from full-prefix forwards.
@@ -199,6 +202,7 @@ def main():
                 .logits[0, -1]
                 .float()
             )
+            logits = logits / args.temperature
             sorted_logits, indices = logits.sort()
             remove = sorted_logits.softmax(-1).cumsum(-1) <= 0.05
             remove[-1] = False
@@ -239,10 +243,10 @@ def main():
         bf16=False,
         fp16=False,
         use_vllm=False,
-        per_device_train_batch_size=1 if args.split_groups else 2,
-        gradient_accumulation_steps=2 if args.split_groups else 1,
-        num_generations=2,
-        steps_per_generation=2 if args.split_groups else 1,
+        per_device_train_batch_size=1 if args.split_groups else args.num_generations,
+        gradient_accumulation_steps=args.num_generations if args.split_groups else 1,
+        num_generations=args.num_generations,
+        steps_per_generation=args.num_generations if args.split_groups else 1,
         num_iterations=1,
         max_steps=2,
         max_completion_length=64,
@@ -252,7 +256,7 @@ def main():
         scale_rewards="group",
         mask_truncated_completions=False,
         disable_dropout=True,
-        temperature=1.0,
+        temperature=args.temperature,
         top_p=0.95,
         report_to="none",
         save_strategy="no",
@@ -289,7 +293,8 @@ def main():
             .float()
         )
         expected = (
-            logits.log_softmax(-1)
+            logits.div(args.temperature)
+            .log_softmax(-1)
             .gather(-1, fixture_ids[:, 2:].unsqueeze(-1))
             .squeeze(-1)
         )
@@ -299,10 +304,25 @@ def main():
             f"Fused head differs from original policy logprobs: {fused_error}"
         )
     checks = []
+    rejected_corruptions = []
     original_loss = trainer._compute_loss
     original_logps = trainer._get_per_token_logps_and_entropies
 
     def checked_loss(self, current_model, inputs):
+        validate_trainer_token_rows(inputs, rollout.episodes)
+        if not checks:
+            for field in ("prompt_ids", "completion_ids", "tool_mask"):
+                altered = dict(inputs)
+                altered[field] = inputs[field].clone()
+                altered[field][0, 0] += 1
+                try:
+                    validate_trainer_token_rows(altered, rollout.episodes)
+                except ValueError:
+                    rejected_corruptions.append(field)
+                else:
+                    raise ValueError(
+                        f"Trainer row corruption was not detected: {field}"
+                    )
         mask = inputs["completion_mask"] * inputs["tool_mask"]
         if not torch.any(mask == 0) or not torch.any(mask == 1):
             raise ValueError("Fixture lost model/external mask distinction")
@@ -351,12 +371,12 @@ def main():
         if not p.requires_grad
     ):
         raise ValueError("Frozen model parameters changed")
-    expected_checks = 4 if args.split_groups else 2
+    expected_checks = 2 * args.num_generations if args.split_groups else 2
     if trainer.state.global_step != 2 or len(checks) != expected_checks or not changed:
         raise ValueError("Expected two genuine trainer optimizer updates")
     if any(not row.get("external_gradients_zero") for row in checks):
         raise ValueError("Gradient hook did not validate every loss")
-    if len(rollout.episodes) != 4:
+    if len(rollout.episodes) != 2 * args.num_generations:
         raise ValueError("Trainer did not request two complete generation groups")
     for row in checks:
         for ids in row["completion_ids"]:
@@ -372,6 +392,9 @@ def main():
         "scope": "tiny random CPU model and scripted environment/actions; not pretrained LFM3/browser training",
         "architecture": args.architecture,
         "split_groups_across_accumulation": args.split_groups,
+        "num_generations": args.num_generations,
+        "temperature": args.temperature,
+        "rejected_trainer_row_corruptions": rejected_corruptions,
         "model_revision": MODEL_REVISION if args.architecture == "lfm3" else None,
         "model_config": model.config.to_dict(),
         "parameter_dtypes": sorted({str(p.dtype) for p in model.parameters()}),

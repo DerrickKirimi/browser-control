@@ -22,6 +22,7 @@ from browser_control.book_flight_rollout import (
     BookFlightRollout,
     TransformersTokenSampler,
     native_success_reward,
+    validate_trainer_token_rows,
 )
 from browser_control.book_flight_sft import TRAINING_SEEDS
 from browser_control.lfm3 import MODEL_ID, MODEL_REVISION, LFM3Policy
@@ -79,7 +80,23 @@ def main():
         revision=MODEL_REVISION,
         model_id=MODEL_ID,
     )
-    decoder = DecoderConfig("grpo-smoke", True, 128, temperature=1.0, top_p=0.95)
+    settings = diagnostic["manifest"]["config"]["decoder"]
+    decoder = DecoderConfig(**{**settings, "name": "grpo-smoke"})
+    group_size = diagnostic["manifest"]["config"]["group_size"]
+    if (
+        group_size not in (2, 4)
+        or decoder.generation_kwargs()
+        != {
+            "do_sample": True,
+            "max_new_tokens": 128,
+            "temperature": decoder.temperature,
+            "top_p": 0.95,
+        }
+        or decoder.temperature not in (1.0, 1.5)
+    ):
+        parser.error(
+            "Bounded smoke requires matched groups2/4, temperature1/1.5, top_p.95, cap128"
+        )
     args.output_dir.mkdir(parents=True)
     report = {
         "status": "running",
@@ -101,8 +118,8 @@ def main():
                 "optimizer_steps": 1,
                 "learning_rate": 1e-6,
                 "microbatch_size": 1,
-                "gradient_accumulation_steps": 2,
-                "num_generations": 2,
+                "gradient_accumulation_steps": group_size,
+                "num_generations": group_size,
                 "initial_scale": 1.0,
             },
         ).to_dict(),
@@ -201,9 +218,9 @@ def main():
                 bf16=False,
                 use_vllm=False,
                 per_device_train_batch_size=1,
-                gradient_accumulation_steps=2,
-                num_generations=2,
-                steps_per_generation=2,
+                gradient_accumulation_steps=group_size,
+                num_generations=group_size,
+                steps_per_generation=group_size,
                 num_iterations=1,
                 max_steps=1,
                 max_completion_length=15 * 128,
@@ -217,8 +234,8 @@ def main():
                 disable_dropout=True,
                 gradient_checkpointing=True,
                 gradient_checkpointing_kwargs={"use_reentrant": False},
-                temperature=1.0,
-                top_p=0.95,
+                temperature=decoder.temperature,
+                top_p=decoder.top_p,
                 report_to="none",
                 save_strategy="no",
                 logging_steps=1,
@@ -244,6 +261,7 @@ def main():
             original_logps = trainer._get_per_token_logps_and_entropies
 
             def checked_loss(self, current_model, inputs):
+                validate_trainer_token_rows(inputs, rollout.episodes)
                 self._smoke_mask = inputs["completion_mask"] * inputs["tool_mask"]
                 if not torch.isfinite(inputs["advantages"]).all() or not torch.any(
                     inputs["advantages"] != 0
@@ -252,7 +270,10 @@ def main():
                         "Native group must yield finite nonzero advantages"
                     )
                 report["loss_checks"].append(
-                    {"advantages": inputs["advantages"].tolist()}
+                    {
+                        "advantages": inputs["advantages"].tolist(),
+                        "raw_ids_preserved": True,
+                    }
                 )
                 return original_loss(current_model, inputs)
 
@@ -293,11 +314,12 @@ def main():
                 trainer.state.global_step != 1
                 or not changed
                 or frozen_after != frozen_before
-                or len(report["loss_checks"]) != 2
+                or len(report["loss_checks"]) != group_size
                 or len(report["gradient_checks"]) != 1
-                or len(rollout.episodes) != 2
+                or len(rollout.episodes) != group_size
                 or not all(
-                    row.get("external_gradients_zero") for row in report["loss_checks"]
+                    row.get("external_gradients_zero") and row.get("raw_ids_preserved")
+                    for row in report["loss_checks"]
                 )
                 or any(not torch.isfinite(p).all() for p in trainable.values())
             ):
