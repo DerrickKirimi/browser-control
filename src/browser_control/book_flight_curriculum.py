@@ -9,10 +9,12 @@ from browser_control.book_flight_sft import TRAINING_SEEDS
 
 
 def plan_examples(
-    examples: list[dict], *, skills=None, passes=1, seed=23
+    examples: list[dict], *, skills=None, passes=1, seed=23, replay_per_skill=0
 ) -> list[dict]:
     if passes < 1:
         raise ValueError("Training passes must be positive")
+    if replay_per_skill < 0 or (replay_per_skill and not skills):
+        raise ValueError("Replay requires focus skills and a nonnegative budget")
     if any(example["task_seed"] not in TRAINING_SEEDS for example in examples):
         raise ValueError("Curriculum accepts training seeds only")
     selected = list(examples)
@@ -22,10 +24,31 @@ def plan_examples(
         selected = [e for e in examples if e["skill"] in skills]
     planned = []
     for index in range(passes):
+        rng = random.Random(seed + index)
         current = [
-            {**copy.deepcopy(example), "pass_index": index} for example in selected
+            {
+                **copy.deepcopy(example),
+                "pass_index": index,
+                "curriculum_role": "focus" if skills else "primary",
+            }
+            for example in selected
         ]
-        random.Random(seed + index).shuffle(current)
+        if replay_per_skill:
+            for skill in sorted({e["skill"] for e in examples} - set(skills)):
+                pool = [e for e in examples if e["skill"] == skill]
+                if len(pool) < replay_per_skill:
+                    raise ValueError(
+                        "Replay budget exceeds available examples for a skill"
+                    )
+                current.extend(
+                    {
+                        **copy.deepcopy(e),
+                        "pass_index": index,
+                        "curriculum_role": "replay",
+                    }
+                    for e in rng.sample(pool, replay_per_skill)
+                )
+        rng.shuffle(current)
         planned.extend(current)
     return planned
 

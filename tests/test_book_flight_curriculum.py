@@ -48,6 +48,24 @@ def test_reserved_data_is_rejected():
         plan_examples([{**examples()[0], "task_seed": 10100}])
 
 
+def test_focus_replay_preserves_declared_anchor_budget():
+    planned = plan_examples(
+        examples(), skills=["choose_date", "book_flight"], passes=4, replay_per_skill=1
+    )
+    assert len(planned) == 12
+    assert sum(row["curriculum_role"] == "replay" for row in planned) == 4
+    assert {row["skill"] for row in planned if row["curriculum_role"] == "replay"} == {
+        "search"
+    }
+
+
+def test_replay_cannot_exceed_available_pool():
+    with pytest.raises(ValueError, match="Replay budget"):
+        plan_examples(
+            examples(), skills=["choose_date", "book_flight"], replay_per_skill=2
+        )
+
+
 def adapter():
     expected = {
         "r": 32,

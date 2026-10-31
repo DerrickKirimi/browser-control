@@ -54,6 +54,7 @@ def main() -> None:
     parser.add_argument("--focus-skills", nargs="+")
     parser.add_argument("--passes", type=int, default=1)
     parser.add_argument("--seen-training-fit", action="store_true")
+    parser.add_argument("--replay-per-skill", type=int, default=0)
     args = parser.parse_args()
     if args.updates <= 0 or args.accumulation <= 0:
         parser.error("updates and accumulation must be positive")
@@ -97,7 +98,12 @@ def main() -> None:
         parser.error("Token validation must match the exact ID augmentation policy")
     if augmentation is not None and (args.focus_skills or args.passes != 1):
         parser.error("ID augmentation currently supports one full-corpus pass only")
-    examples = plan_examples(examples, skills=args.focus_skills, passes=args.passes)
+    examples = plan_examples(
+        examples,
+        skills=args.focus_skills,
+        passes=args.passes,
+        replay_per_skill=args.replay_per_skill,
+    )
     needed = args.updates * args.accumulation
     if needed > len(examples):
         parser.error("Run exceeds the explicitly configured example/pass budget")
@@ -169,6 +175,7 @@ def main() -> None:
             "run_label": run_label,
             "focus_skills": args.focus_skills,
             "passes": args.passes,
+            "replay_per_skill": args.replay_per_skill,
             "initial_adapter": initial_adapter,
             "optimizer_state": "fresh",
             "id_augmentation": augmentation,
@@ -207,6 +214,7 @@ def main() -> None:
                     "id_mapping_sha256",
                     "id_permutation_seed",
                     "pass_index",
+                    "curriculum_role",
                 )
                 if k in example
             }
@@ -344,6 +352,7 @@ def main() -> None:
                         "task_seed": metadata["task_seed"],
                         "turn": metadata["turn"],
                         "pass_index": metadata["pass_index"],
+                        "curriculum_role": metadata["curriculum_role"],
                         "skill": metadata["skill"],
                         "loss": loss.item(),
                         "target_tokens": target_length,
