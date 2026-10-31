@@ -1,7 +1,8 @@
 """Exercise real TRL 1.16 batching, env masks and updates with a tiny CPU fixture.
 
-The fixture scripts actions and native outcomes. This validates trainer wiring,
-not the LFM3 model, real browser sampling, T4 memory or task learning.
+The fixture scripts actions and native outcomes. This validates trainer wiring
+and optionally the pinned LFM3 architecture with tiny random weights, not the
+pretrained policy, real browser sampling, T4 memory or task learning.
 """
 
 from __future__ import annotations
@@ -21,6 +22,7 @@ from browser_control.book_flight_rollout import (
     native_success_reward,
 )
 from browser_control.environment import BrowserObservation, BrowserStep
+from browser_control.lfm3 import MODEL_ID, MODEL_REVISION
 from browser_control.lfm3_trainer import low_scale_grpo_trainer_class
 from browser_control.transformers_policy import DecoderConfig
 
@@ -95,6 +97,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--lora", action="store_true")
+    parser.add_argument("--architecture", choices=("llama", "lfm3"), default="llama")
     args = parser.parse_args()
     if args.output.exists():
         parser.error("Preserve earlier contract evidence")
@@ -120,19 +123,52 @@ def main():
             eos_token_id=99,
         )
     )
+    if args.architecture == "lfm3":
+        from transformers import AutoConfig, AutoModelForCausalLM
+
+        tiny_config = AutoConfig.from_pretrained(
+            MODEL_ID,
+            revision=MODEL_REVISION,
+            trust_remote_code=True,
+            vocab_size=128,
+            hidden_size=32,
+            intermediate_size=64,
+            num_hidden_layers=3,
+            num_attention_heads=4,
+            num_key_value_heads=2,
+            head_dim=8,
+            layer_types=["conv", "full_attention", "sliding_attention"],
+            max_position_embeddings=256,
+            sliding_window=16,
+            pad_token_id=0,
+            bos_token_id=1,
+            eos_token_id=99,
+        )
+        model = AutoModelForCausalLM.from_config(
+            tiny_config,
+            trust_remote_code=True,
+            code_revision=MODEL_REVISION,
+            attn_implementation="sdpa",
+            dtype=torch.float32,
+        )
     model.generation_config = GenerationConfig(
         pad_token_id=0, eos_token_id=99, bos_token_id=1, top_k=0
     )
     if args.lora:
         from peft import LoraConfig, get_peft_model
 
+        targets = ["q_proj", "v_proj"]
+        if args.architecture == "lfm3":
+            from preflight_lfm3_attention import LORA
+
+            targets = LORA["target_modules"]
         model = get_peft_model(
             model,
             LoraConfig(
                 r=2,
                 lora_alpha=4,
                 lora_dropout=0.0,
-                target_modules=["q_proj", "v_proj"],
+                target_modules=targets,
                 task_type="CAUSAL_LM",
             ),
         )
@@ -156,7 +192,12 @@ def main():
         for token, observed in zip(
             sampled.token_ids, sampled.sampling_logprobs, strict=True
         ):
-            logits = model(input_ids=torch.tensor([context])).logits[0, -1].float()
+            ids = torch.tensor([context])
+            logits = (
+                model(input_ids=ids, attention_mask=torch.ones_like(ids))
+                .logits[0, -1]
+                .float()
+            )
             sorted_logits, indices = logits.sort()
             remove = sorted_logits.softmax(-1).cumsum(-1) <= 0.05
             remove[-1] = False
@@ -165,8 +206,26 @@ def main():
             errors.append(abs(expected - observed))
             context.append(token)
     if max(errors) > 1e-5:
+        args.output.parent.mkdir(parents=True, exist_ok=True)
+        args.output.write_text(
+            json.dumps(
+                {
+                    "status": "failed",
+                    "check": "independent-sampling-logprobs",
+                    "architecture": args.architecture,
+                    "model_revision": MODEL_REVISION,
+                    "scope": "tiny random CPU model; not pretrained LFM3/browser training",
+                    "absolute_errors": errors,
+                    "sampled_ids": sampled.token_ids,
+                    "model_config": model.config.to_dict(),
+                },
+                indent=2,
+            )
+            + "\n"
+        )
         raise ValueError(
-            "Recorded sampling probabilities do not match processed top-p scores"
+            "Recorded sampling probabilities do not match processed top-p scores: "
+            f"per-token absolute errors={errors}"
         )
     before = {n: p.detach().clone() for n, p in model.named_parameters()}
     rollout = BookFlightRollout(
@@ -212,6 +271,32 @@ def main():
     )
     if trainer.accelerator.scaler_handler.init_scale != 1.0:
         raise ValueError("Explicit initial loss scale did not reach Accelerate")
+    # TRL patches the model with its fused LM head. Independently compare that
+    # path with the original causal forward on a multi-turn fixture prefix.
+    fixture_ids = torch.tensor([[10, 11, 81, 99, 7, 55, 56, 77, 82, 99]])
+    with torch.inference_mode():
+        fused, _, _ = trainer._get_per_token_logps_and_entropies(
+            model, fixture_ids, torch.ones_like(fixture_ids), 8
+        )
+        logits = (
+            model(
+                input_ids=fixture_ids,
+                attention_mask=torch.ones_like(fixture_ids),
+                use_cache=False,
+            )
+            .logits[:, 1:-1]
+            .float()
+        )
+        expected = (
+            logits.log_softmax(-1)
+            .gather(-1, fixture_ids[:, 2:].unsqueeze(-1))
+            .squeeze(-1)
+        )
+        fused_error = (fused - expected).abs().max().item()
+    if fused_error > 1e-5:
+        raise ValueError(
+            f"Fused head differs from original policy logprobs: {fused_error}"
+        )
     checks = []
     original_loss = trainer._compute_loss
     original_logps = trainer._get_per_token_logps_and_entropies
@@ -282,7 +367,17 @@ def main():
                 raise ValueError("Trainer rewrote generated/external IDs")
     report = {
         "status": "passed",
-        "scope": "tiny CPU model and scripted environment/actions; not LFM3/browser training",
+        "scope": "tiny random CPU model and scripted environment/actions; not pretrained LFM3/browser training",
+        "architecture": args.architecture,
+        "model_revision": MODEL_REVISION if args.architecture == "lfm3" else None,
+        "model_config": model.config.to_dict(),
+        "parameter_dtypes": sorted({str(p.dtype) for p in model.parameters()}),
+        "lora_target_modules": targets if args.lora else None,
+        "model_source_sha256": hashlib.sha256(
+            Path(
+                inspect.getfile(type(model.get_base_model() if args.lora else model))
+            ).read_bytes()
+        ).hexdigest(),
         "trainer_steps": trainer.state.global_step,
         "changed_parameter_tensors": changed,
         "adapter_only": args.lora,
@@ -298,6 +393,7 @@ def main():
         ).hexdigest(),
         "sampler_tokens": len(sampled.token_ids),
         "sampling_logprob_max_error": max(errors),
+        "fused_policy_logprob_max_error": fused_error,
         "checks": checks,
         "episodes": rollout.episodes,
     }
