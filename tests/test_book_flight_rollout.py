@@ -176,6 +176,25 @@ def test_callback_rejects_mixed_seed_generation_group():
         rollout([json.dumps({"task_seed": seed}) for seed in (100, 101)], trainer())
 
 
+def test_callback_can_repeat_the_frozen_diagnostic_sampling_seeds():
+    current = trainer()
+    sampler = Sampler([TokenTurn((81, 99), (-2, -1), CALL)] * 4)
+    rollout = BookFlightRollout(
+        Environment(),
+        Tokenizer(),
+        lambda model: sampler,
+        generation_seed_base=1_000_000 + 100 * 64,
+    )
+    rollout([json.dumps({"task_seed": 100})] * 2, current)
+    assert sampler.seeds == [1_006_400, 1_006_401, 1_006_416, 1_006_417]
+
+
+@pytest.mark.parametrize("seed", [-1, True, 1.5])
+def test_invalid_generation_seed_base_is_rejected(seed):
+    with pytest.raises(ValueError, match="seed base"):
+        BookFlightRollout(None, None, None, generation_seed_base=seed)
+
+
 def test_callback_rejects_trl_tool_loop_to_avoid_double_execution():
     current = trainer()
     current.tools = ["click"]

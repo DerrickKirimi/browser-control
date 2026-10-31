@@ -74,7 +74,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--adapter", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument("--seeds", nargs="+", type=int, default=[100, 101])
+    parser.add_argument("--seeds", nargs="+", type=int, default=[100, 132])
     parser.add_argument("--group-size", type=int, default=2)
     args = parser.parse_args()
     if args.output.exists():

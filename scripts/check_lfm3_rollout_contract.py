@@ -98,6 +98,7 @@ def main():
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--lora", action="store_true")
     parser.add_argument("--architecture", choices=("llama", "lfm3"), default="llama")
+    parser.add_argument("--split-groups", action="store_true")
     args = parser.parse_args()
     if args.output.exists():
         parser.error("Preserve earlier contract evidence")
@@ -238,10 +239,10 @@ def main():
         bf16=False,
         fp16=False,
         use_vllm=False,
-        per_device_train_batch_size=2,
-        gradient_accumulation_steps=1,
+        per_device_train_batch_size=1 if args.split_groups else 2,
+        gradient_accumulation_steps=2 if args.split_groups else 1,
         num_generations=2,
-        steps_per_generation=1,
+        steps_per_generation=2 if args.split_groups else 1,
         num_iterations=1,
         max_steps=2,
         max_completion_length=64,
@@ -350,7 +351,8 @@ def main():
         if not p.requires_grad
     ):
         raise ValueError("Frozen model parameters changed")
-    if trainer.state.global_step != 2 or len(checks) != 2 or not changed:
+    expected_checks = 4 if args.split_groups else 2
+    if trainer.state.global_step != 2 or len(checks) != expected_checks or not changed:
         raise ValueError("Expected two genuine trainer optimizer updates")
     if any(not row.get("external_gradients_zero") for row in checks):
         raise ValueError("Gradient hook did not validate every loss")
@@ -369,6 +371,7 @@ def main():
         "status": "passed",
         "scope": "tiny random CPU model and scripted environment/actions; not pretrained LFM3/browser training",
         "architecture": args.architecture,
+        "split_groups_across_accumulation": args.split_groups,
         "model_revision": MODEL_REVISION if args.architecture == "lfm3" else None,
         "model_config": model.config.to_dict(),
         "parameter_dtypes": sorted({str(p.dtype) for p in model.parameters()}),

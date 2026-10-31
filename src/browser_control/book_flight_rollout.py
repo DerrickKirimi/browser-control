@@ -220,10 +220,15 @@ class BookFlightRollout:
     probabilities and model/external token masks without re-tokenization.
     """
 
-    def __init__(self, environment, tokenizer, sampler_factory):
+    def __init__(
+        self, environment, tokenizer, sampler_factory, *, generation_seed_base=1_000_000
+    ):
+        if type(generation_seed_base) is not int or generation_seed_base < 0:
+            raise ValueError("Generation seed base must be a nonnegative integer")
         self.environment = environment
         self.tokenizer = tokenizer
         self.sampler_factory = sampler_factory
+        self.generation_seed_base = generation_seed_base
         self.episodes: list[dict] = []
 
     def __call__(self, prompts, trainer) -> dict:
@@ -256,7 +261,7 @@ class BookFlightRollout:
                     sampler,
                     self.tokenizer,
                     request["task_seed"],
-                    generation_seed=1_000_000
+                    generation_seed=self.generation_seed_base
                     + trainer.state.global_step * 100_000
                     + index * 16,
                 )
