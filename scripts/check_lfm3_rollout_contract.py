@@ -49,13 +49,14 @@ class FixtureTokenizer:
 
 
 class FixtureEnvironment:
-    def __init__(self):
+    def __init__(self, constant_rewards=False):
         self.resets = 0
+        self.constant_rewards = constant_rewards
 
     def reset(self, *, seed):
         self.resets += 1
         self.turn = 0
-        self.success = self.resets % 2 == 1
+        self.success = self.constant_rewards or self.resets % 2 == 1
         return BrowserStep(BrowserObservation("fixture", "[1] button"), 0.0, False)
 
     def step(self, action):
@@ -102,6 +103,7 @@ def main():
     parser.add_argument("--split-groups", action="store_true")
     parser.add_argument("--num-generations", type=int, choices=(2, 4), default=2)
     parser.add_argument("--temperature", type=float, choices=(1.0, 1.5), default=1.0)
+    parser.add_argument("--constant-rewards", action="store_true")
     args = parser.parse_args()
     if args.output.exists():
         parser.error("Preserve earlier contract evidence")
@@ -234,7 +236,9 @@ def main():
         )
     before = {n: p.detach().clone() for n, p in model.named_parameters()}
     rollout = BookFlightRollout(
-        FixtureEnvironment(), FixtureTokenizer(), lambda m: FixtureSampler()
+        FixtureEnvironment(args.constant_rewards),
+        FixtureTokenizer(),
+        lambda m: FixtureSampler(),
     )
     args.output.parent.mkdir(parents=True, exist_ok=True)
     config = trl.GRPOConfig(
@@ -326,8 +330,10 @@ def main():
         mask = inputs["completion_mask"] * inputs["tool_mask"]
         if not torch.any(mask == 0) or not torch.any(mask == 1):
             raise ValueError("Fixture lost model/external mask distinction")
-        if not torch.all(torch.isfinite(inputs["advantages"])) or not torch.any(
-            inputs["advantages"] != 0
+        nonzero = bool(torch.any(inputs["advantages"] != 0).item())
+        if (
+            not torch.all(torch.isfinite(inputs["advantages"]))
+            or nonzero == args.constant_rewards
         ):
             raise ValueError("Fixture native rewards did not produce useful advantages")
         self._contract_active_mask = mask
@@ -350,7 +356,10 @@ def main():
                     raise ValueError("Nonfinite policy-logprob gradient")
                 if torch.any(gradient[active == 0] != 0):
                     raise ValueError("External/padding tokens received policy gradient")
-                if not torch.any(gradient[active == 1] != 0):
+                if (
+                    bool(torch.any(gradient[active == 1] != 0).item())
+                    == args.constant_rewards
+                ):
                     raise ValueError("No model token received policy gradient")
                 checks[-1]["external_gradients_zero"] = True
 
@@ -372,7 +381,11 @@ def main():
     ):
         raise ValueError("Frozen model parameters changed")
     expected_checks = 2 * args.num_generations if args.split_groups else 2
-    if trainer.state.global_step != 2 or len(checks) != expected_checks or not changed:
+    if (
+        trainer.state.global_step != 2
+        or len(checks) != expected_checks
+        or bool(changed) == args.constant_rewards
+    ):
         raise ValueError("Expected two genuine trainer optimizer updates")
     if any(not row.get("external_gradients_zero") for row in checks):
         raise ValueError("Gradient hook did not validate every loss")
@@ -394,6 +407,7 @@ def main():
         "split_groups_across_accumulation": args.split_groups,
         "num_generations": args.num_generations,
         "temperature": args.temperature,
+        "constant_native_rewards": args.constant_rewards,
         "rejected_trainer_row_corruptions": rejected_corruptions,
         "model_revision": MODEL_REVISION if args.architecture == "lfm3" else None,
         "model_config": model.config.to_dict(),
@@ -427,7 +441,9 @@ def main():
         report["packages"]["peft"] = importlib.metadata.version("peft")
     args.output.write_text(json.dumps(report, indent=2, allow_nan=False) + "\n")
     print(
-        "Passed: real TRL custom rollout, grouped rewards, external masks, gradients and two updates"
+        "Passed: zero-advantage/zero-gradient constant-native-group contract"
+        if args.constant_rewards
+        else "Passed: real TRL custom rollout, grouped rewards, external masks, gradients and two updates"
     )
 
 
