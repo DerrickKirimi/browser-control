@@ -21,6 +21,7 @@ from browser_control.book_flight_rollout import (
     native_success_reward,
 )
 from browser_control.environment import BrowserObservation, BrowserStep
+from browser_control.lfm3_trainer import low_scale_grpo_trainer_class
 from browser_control.transformers_policy import DecoderConfig
 
 CALL = "<tool_call><function=click><parameter=bid>1</parameter></function></tool_call>"
@@ -199,7 +200,7 @@ def main():
         disable_tqdm=True,
         seed=23,
     )
-    trainer = trl.GRPOTrainer(
+    trainer = low_scale_grpo_trainer_class()(
         model=model,
         args=config,
         processing_class=tokenizer,
@@ -209,6 +210,8 @@ def main():
         ),
         rollout_func=rollout,
     )
+    if trainer.accelerator.scaler_handler.init_scale != 1.0:
+        raise ValueError("Explicit initial loss scale did not reach Accelerate")
     checks = []
     original_loss = trainer._compute_loss
     original_logps = trainer._get_per_token_logps_and_entropies
@@ -283,6 +286,8 @@ def main():
         "trainer_steps": trainer.state.global_step,
         "changed_parameter_tensors": changed,
         "adapter_only": args.lora,
+        "configured_initial_scale": trainer.accelerator.scaler_handler.init_scale,
+        "fp16_gpu_scaling_executed": False,
         "script_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
         "packages": {
             name: importlib.metadata.version(name)
