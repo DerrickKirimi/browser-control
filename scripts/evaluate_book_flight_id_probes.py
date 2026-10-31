@@ -10,16 +10,22 @@ from pathlib import Path
 
 from browser_control.book_flight import BOOK_FLIGHT_TOOLS
 from browser_control.book_flight_diagnostic import (
+    CONFIRMATION_SEEDS,
+    DECISION_SKILLS,
     DEVELOPMENT_SEEDS,
     SAMPLING_128,
     build_probes,
     score_probe,
     summarize_probes,
+    summarize_rollouts,
 )
+from browser_control.book_flight_evaluation import collect_book_flight_episode
 from browser_control.book_flight_ids import compare_id_scores, validate_probe_pair
 from browser_control.book_flight_sft import TRAINING_SEEDS, expert_examples
 from browser_control.lfm3 import MODEL_REVISION, LFM3Policy
+from browser_control.local_browsergym import LocalBrowserGymEnvironment
 from browser_control.manifest import RunManifest
+from browser_control.miniwob_assets import MiniwobAssetServer, ensure_miniwob_assets
 
 
 def main():
@@ -31,6 +37,7 @@ def main():
     parser.add_argument("--adapter", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--training-corpus", type=Path)
+    parser.add_argument("--confirmation", action="store_true")
     args = parser.parse_args()
     if args.output.exists():
         parser.error("Preserve the previous evaluation")
@@ -44,9 +51,26 @@ def main():
     probes = source["probes"]
     if len(probes) != len(altered["probes"]) or len(probes) != len(altered["mappings"]):
         parser.error("Paired probe lengths differ")
+    cohort = CONFIRMATION_SEEDS if args.confirmation else DEVELOPMENT_SEEDS
     for original in probes:
-        if original["task_seed"] not in DEVELOPMENT_SEEDS:
+        if original["task_seed"] not in cohort:
             parser.error("Only fixed development probes are allowed")
+    if args.confirmation:
+        pairs = [
+            (p["task_seed"], p["skill"])
+            for p in probes
+            if p["skill"] in DECISION_SKILLS
+        ]
+        if (
+            source.get("status") != "complete"
+            or len(pairs) != 120
+            or set(pairs)
+            != {(seed, skill) for seed in cohort for skill in DECISION_SKILLS}
+            or args.training_corpus is not None
+        ):
+            parser.error(
+                "Confirmation requires complete seeds50–69, six skills each, no training corpus"
+            )
     adapter_config = json.loads((args.adapter / "adapter_config.json").read_text())
     if adapter_config.get("revision") not in (None, MODEL_REVISION):
         parser.error("Adapter config names a different base revision")
@@ -63,6 +87,7 @@ def main():
         "prefill_chunk_size": 512,
         "max_prompt_tokens": 16384,
         "training": False,
+        "confirmation": args.confirmation,
         "probe_seed": "100000 + task_seed * 16 + probe_index",
         "permutation_seed": altered["permutation_seed"],
         "scheme": altered["scheme"],
@@ -112,6 +137,8 @@ def main():
     }
     if args.training_corpus is not None:
         payload["seen_training"] = []
+    if args.confirmation:
+        payload["native_confirmation"] = []
     args.output.parent.mkdir(parents=True, exist_ok=True)
 
     def save():
@@ -147,12 +174,51 @@ def main():
             payload[stage + "_summary"] = summarize_probes(payload[stage])
             if stage == "permuted":
                 payload["decision"] = compare_id_scores(
-                    payload["original_summary"], payload["permuted_summary"]
+                    payload["original_summary"],
+                    payload["permuted_summary"],
+                    skills=DECISION_SKILLS if args.confirmation else None,
                 )
             save()
         payload["decision"] = compare_id_scores(
-            payload["original_summary"], payload["permuted_summary"]
+            payload["original_summary"],
+            payload["permuted_summary"],
+            skills=DECISION_SKILLS if args.confirmation else None,
         )
+        if args.confirmation:
+            root = ensure_miniwob_assets("artifacts/miniwob-plusplus")
+            with MiniwobAssetServer(root) as server:
+                env = LocalBrowserGymEnvironment.miniwob(
+                    "book-flight-nodelay", miniwob_url=server.base_url
+                )
+                try:
+                    for seed in list(CONFIRMATION_SEEDS)[:10]:
+                        payload["native_confirmation"].append(
+                            collect_book_flight_episode(
+                                env, policy, seed, numerical_check=policy.check_logits
+                            )
+                        )
+                        save()
+                finally:
+                    env.close()
+            payload["native_confirmation_summary"] = summarize_rollouts(
+                payload["native_confirmation"]
+            )
+            skills_pass = all(
+                payload["original_summary"]["skills"][skill]["correct"] >= 14
+                for skill in DECISION_SKILLS
+            )
+            native_pass = (
+                sum(row["success"] for row in payload["native_confirmation"]) >= 2
+            )
+            payload["confirmation_qualification"] = {
+                "passed": skills_pass
+                and native_pass
+                and not payload["decision"]["stop_grpo"],
+                "skills_pass": skills_pass,
+                "native_pass": native_pass,
+                "id_pass": not payload["decision"]["stop_grpo"],
+                "scope": "fresh development qualification; not held-out generalization",
+            }
         payload["status"] = "complete"
     except BaseException as error:
         payload.update(status="failed", error=f"{type(error).__name__}: {error}"[:1000])

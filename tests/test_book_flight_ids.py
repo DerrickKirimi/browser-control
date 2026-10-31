@@ -130,6 +130,24 @@ def test_incomplete_id_comparison_cannot_pass_gate():
         compare_id_scores(incomplete, incomplete)
 
 
+@pytest.mark.parametrize("skill", ["choose_date", "book_flight"])
+def test_amended_six_skill_gate_catches_previously_ungated_drops(skill):
+    from browser_control.book_flight_diagnostic import DECISION_SKILLS
+
+    before = {
+        "skills": {name: {"count": 20, "correct": 20} for name in DECISION_SKILLS}
+    }
+    after = deepcopy(before)
+    after["skills"][skill]["correct"] = 16
+    assert not compare_id_scores(before, after)["stop_grpo"]
+    assert compare_id_scores(before, after, skills=DECISION_SKILLS)["stop_grpo"]
+
+
+def test_empty_id_gate_cannot_pass_without_checking_any_skill():
+    with pytest.raises(ValueError, match="distinct known critical"):
+        compare_id_scores({}, {}, skills=())
+
+
 def training_example(seed=100, turn=5):
     return {
         "task_seed": seed,

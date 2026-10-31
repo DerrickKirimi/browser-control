@@ -106,10 +106,20 @@ def relabel_probe(probe: dict, mapping: dict[str, str]) -> dict:
     return result
 
 
-def compare_id_scores(original: dict, permuted: dict) -> dict:
+def compare_id_scores(original: dict, permuted: dict, *, skills=None) -> dict:
     """Predeclared >=4/20 drop gate; a small drop is not proof of grounding."""
+    from browser_control.book_flight_diagnostic import DECISION_SKILLS
+
+    if skills is None:
+        skills = ("select_origin", "select_destination", "open_calendar", "search")
+    if (
+        not skills
+        or len(set(skills)) != len(skills)
+        or set(skills) - set(DECISION_SKILLS)
+    ):
+        raise ValueError("ID gate requires distinct known critical skills")
     rows = {}
-    for skill in ("select_origin", "select_destination", "open_calendar", "search"):
+    for skill in skills:
         before, after = original["skills"][skill], permuted["skills"][skill]
         if before["count"] != 20 or after["count"] != 20:
             raise ValueError("ID-sensitivity gate requires 20 matched probes per skill")

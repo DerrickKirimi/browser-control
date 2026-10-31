@@ -7,7 +7,7 @@ import hashlib
 import json
 from pathlib import Path
 
-from browser_control.book_flight_diagnostic import DEVELOPMENT_SEEDS
+from browser_control.book_flight_diagnostic import CONFIRMATION_SEEDS, DEVELOPMENT_SEEDS
 from browser_control.book_flight_ids import (
     id_permutation,
     relabel_probe,
@@ -20,6 +20,7 @@ def main():
     parser.add_argument("--probes", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--seed", type=int, default=20261030)
+    parser.add_argument("--confirmation", action="store_true")
     args = parser.parse_args()
     if args.output.exists():
         parser.error("Preserve existing probe sets; choose a new output path")
@@ -33,7 +34,8 @@ def main():
         "mappings": [],
     }
     for index, probe in enumerate(source["probes"]):
-        if probe["task_seed"] not in DEVELOPMENT_SEEDS:
+        seeds = CONFIRMATION_SEEDS if args.confirmation else DEVELOPMENT_SEEDS
+        if probe["task_seed"] not in seeds:
             parser.error("This diagnostic accepts only the fixed development probes")
         mapping = id_permutation(structural_ids(probe), seed=args.seed + index)
         altered = relabel_probe(probe, mapping)
