@@ -67,3 +67,30 @@ terminal reward. Invalid outputs are counted without repair or an environment
 action. Numerical failures abort the run. Per-task success counts and Wilson
 intervals are recomputed from native outcomes. This remains development evaluation;
 neither the CLI nor the CPU contract establishes a pretrained vision or RL result.
+
+## Multimodal trainer contract
+
+`requirements-lfm3-vision-training.txt` adds TRL1.16, PEFT and datasets to the
+separate vision runtime. `StagedVisionRollout` collects images before TRL prepares
+its multimodal tensors, then returns the original sampled prompt/completion IDs.
+The messages used to prepare image tensors do not replace those IDs.
+
+The native vision trainer checks each microbatch's raw IDs/masks, pixels, grid,
+image count and group-normalized native advantage against its collected row.
+Live autograd hooks reject nonfinite policy gradients, gradients on external or
+padding tokens, and missing generated-token gradients for nonzero advantages.
+This path currently supports float32/float16 image tensors, unit native rewards,
+one-iteration GRPO, group reward scaling and beta0.
+
+```bash
+HF_HUB_OFFLINE=1 PYTHONPATH=src python scripts/check_lfm3_vision_trl_contract.py \
+  --model-source PATH --output multimodal-contract.json
+```
+
+The two-update CPU fixture uses tiny random weights, language-model-only LoRA,
+scripted outcomes and reduced-resolution images. One image is in the prompt;
+another is in masked external completion context. It checks image/token/mask
+corruptions, causal isolation of the future image, later image influence, changed
+LoRA and unchanged frozen weights. `--constant-rewards` checks the zero-advantage
+control, which must leave weights unchanged. These checks do not establish
+pretrained T4 stability/memory, real browser sampling or a learning improvement.

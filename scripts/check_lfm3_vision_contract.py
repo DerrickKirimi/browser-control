@@ -24,41 +24,13 @@ from browser_control.transformers_policy import DecoderConfig
 from browser_control.vision_browser import VisionObservation
 
 
-def main():
+def tiny_vision_model(model_source):
+    """Construct a small random instance of the pinned multimodal architecture."""
     import torch
-    from PIL import Image
-    from transformers import AutoConfig, AutoModelForImageTextToText, AutoProcessor
+    from transformers import AutoConfig, AutoModelForImageTextToText
 
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--model-source", type=Path, required=True)
-    parser.add_argument("--screenshot", type=Path, required=True)
-    parser.add_argument("--goal", required=True)
-    parser.add_argument("--output", type=Path, required=True)
-    args = parser.parse_args()
-    if args.output.exists():
-        parser.error("Preserve earlier contract evidence")
-    if version("transformers") != "5.21.0":
-        parser.error("This CPU contract pins Transformers5.21.0")
-    torch.set_num_threads(2)
-    torch.manual_seed(23)
-    image = Image.open(args.screenshot)
-    observation = VisionObservation(
-        args.goal, args.screenshot.read_bytes(), image.width, image.height
-    )
-    processor = AutoProcessor.from_pretrained(
-        args.model_source, trust_remote_code=True, local_files_only=True
-    )
-    inputs = processor.apply_chat_template(
-        build_vision_messages(observation),
-        tools=COORDINATE_TOOLS,
-        add_generation_prompt=True,
-        tokenize=True,
-        return_dict=True,
-        return_tensors="pt",
-        enable_thinking=False,
-    )
     config = AutoConfig.from_pretrained(
-        args.model_source, trust_remote_code=True, local_files_only=True
+        model_source, trust_remote_code=True, local_files_only=True
     )
     text = config.text_config.to_dict()
     text.update(
@@ -90,10 +62,47 @@ def main():
         dtype="float32",
         auto_map=config.auto_map,
     )
-    tiny._name_or_path = str(args.model_source)
-    model = AutoModelForImageTextToText.from_config(
+    tiny._name_or_path = str(model_source)
+    return AutoModelForImageTextToText.from_config(
         tiny, trust_remote_code=True, dtype=torch.float32, attn_implementation="sdpa"
     ).eval()
+
+
+def main():
+    import torch
+    from PIL import Image
+    from transformers import AutoProcessor
+
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--model-source", type=Path, required=True)
+    parser.add_argument("--screenshot", type=Path, required=True)
+    parser.add_argument("--goal", required=True)
+    parser.add_argument("--output", type=Path, required=True)
+    args = parser.parse_args()
+    if args.output.exists():
+        parser.error("Preserve earlier contract evidence")
+    if version("transformers") != "5.21.0":
+        parser.error("This CPU contract pins Transformers5.21.0")
+    torch.set_num_threads(2)
+    torch.manual_seed(23)
+    image = Image.open(args.screenshot)
+    observation = VisionObservation(
+        args.goal, args.screenshot.read_bytes(), image.width, image.height
+    )
+    processor = AutoProcessor.from_pretrained(
+        args.model_source, trust_remote_code=True, local_files_only=True
+    )
+    inputs = processor.apply_chat_template(
+        build_vision_messages(observation),
+        tools=COORDINATE_TOOLS,
+        add_generation_prompt=True,
+        tokenize=True,
+        return_dict=True,
+        return_tensors="pt",
+        enable_thinking=False,
+    )
+    model = tiny_vision_model(args.model_source)
+    config = model.config
     pixels = inputs["pixel_values"].detach().float().requires_grad_(True)
     inputs["pixel_values"] = pixels
     output = model(**inputs, use_cache=False, logits_to_keep=1)
