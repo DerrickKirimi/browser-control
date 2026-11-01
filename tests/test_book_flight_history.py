@@ -147,3 +147,15 @@ def test_canonical_diagnostic_passes_both_modes():
         assert diagnostic_history_matches(
             {"episodes": [item]}, require_canonical=require_canonical
         )
+
+
+def test_legacy_canonical_ids_prove_text_identity_without_new_text_fields():
+    rows = [{"context_ids_match": True, "assistant_ids_match": True}]
+    diagnostic = {"episodes": [{"history_audit": rows}]}
+    assert diagnostic_history_matches(diagnostic, require_canonical=True)
+    rows[0]["assistant_ids_match"] = False
+    assert not diagnostic_history_matches(diagnostic, require_canonical=False)
+    rows[0]["assistant_text_match"] = True
+    assert diagnostic_history_matches(diagnostic, require_canonical=False)
+    rows[0]["context_text_match"] = False
+    assert not diagnostic_history_matches(diagnostic, require_canonical=False)

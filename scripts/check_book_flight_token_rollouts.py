@@ -39,7 +39,8 @@ def _text(tokenizer, ids):
 def history_text_matches(rows):
     """Same words with different token boundaries are valid sampled histories."""
     return bool(rows) and all(
-        row["context_text_match"] and row.get("assistant_text_match", True)
+        row.get("context_text_match", row.get("context_ids_match", False))
+        and row.get("assistant_text_match", row.get("assistant_ids_match", True))
         for row in rows
     )
 
