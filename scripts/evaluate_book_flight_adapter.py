@@ -17,6 +17,7 @@ from browser_control.book_flight_diagnostic import (
     summarize_rollouts,
 )
 from browser_control.book_flight_evaluation import collect_book_flight_episode
+from browser_control.book_flight_frozen import RESERVED_SEEDS, validate_frozen_arm
 from browser_control.lfm3 import MODEL_ID, MODEL_REVISION, LFM3Policy
 from browser_control.local_browsergym import LocalBrowserGymEnvironment
 from browser_control.manifest import RunManifest
@@ -27,9 +28,27 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--adapter", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--frozen-protocol", type=Path)
+    parser.add_argument("--arm", choices=("sft", "sft_grpo"))
     args = parser.parse_args()
     if args.output.exists():
         parser.error("Preserve the previous evaluation")
+    if bool(args.frozen_protocol) != bool(args.arm):
+        parser.error("Reserved evaluation requires both --frozen-protocol and --arm")
+    adapter_hash = hashlib.sha256(
+        (args.adapter / "adapter_model.safetensors").read_bytes()
+    ).hexdigest()
+    frozen_metadata = {}
+    seeds = list(COMPARISON_SEEDS)
+    if args.frozen_protocol:
+        protocol_bytes = args.frozen_protocol.read_bytes()
+        protocol = json.loads(protocol_bytes)
+        validate_frozen_arm(protocol, args.arm, adapter_hash)
+        seeds = list(RESERVED_SEEDS)
+        frozen_metadata = {
+            "frozen_arm": args.arm,
+            "frozen_protocol_sha256": hashlib.sha256(protocol_bytes).hexdigest(),
+        }
     from peft import PeftModel
     from preflight_lfm3_attention import LORA
 
@@ -49,17 +68,17 @@ def main():
 
     payload = {
         "status": "running",
-        "scope": "matched development comparison; not a held-out estimate",
+        "scope": "reserved frozen policy evaluation"
+        if args.frozen_protocol
+        else "matched development comparison; not a held-out estimate",
         "source_snapshot": snapshot,
         "manifest": RunManifest(
             "lfm3-book-flight-adapter-evaluation",
             23,
             {
-                "adapter_sha256": hashlib.sha256(
-                    (args.adapter / "adapter_model.safetensors").read_bytes()
-                ).hexdigest(),
+                "adapter_sha256": adapter_hash,
                 "model_revision": MODEL_REVISION,
-                "task_seeds": list(COMPARISON_SEEDS),
+                "task_seeds": seeds,
                 "decoder_name": "SAMPLING_128",
                 "decoder": asdict(SAMPLING_128),
                 "attention": "sdpa",
@@ -68,6 +87,7 @@ def main():
                 "max_steps": 15,
                 "enable_thinking": False,
                 "generation_seed": "task_seed * 16 + turn",
+                **frozen_metadata,
             },
         ).to_dict(),
         "episodes": [],
@@ -96,7 +116,7 @@ def main():
                 )
             ) as env,
         ):
-            for seed in COMPARISON_SEEDS:
+            for seed in seeds:
                 payload["episodes"].append(
                     collect_book_flight_episode(
                         env, policy, seed, numerical_check=policy.check_logits

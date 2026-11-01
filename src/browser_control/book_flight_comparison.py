@@ -36,13 +36,13 @@ def _config(report, legacy_settings):
     return config
 
 
-def _episodes(report, config):
+def _episodes(report, config, expected_seeds=COMPARISON_SEEDS):
     if report["status"] != "complete":
         raise ValueError("Only completed evaluations can be compared")
-    seeds = list(COMPARISON_SEEDS)
+    seeds = list(expected_seeds)
     rows = report["episodes"]
     if config.get("task_seeds") != seeds or [row["task_seed"] for row in rows] != seeds:
-        raise ValueError("Expected the complete ordered comparison cohort70–99")
+        raise ValueError("Expected the complete ordered comparison cohort")
     for row in rows:
         if type(row["success"]) is not bool or not row["steps"]:
             raise ValueError("Expected boolean success and recorded model steps")
@@ -61,15 +61,14 @@ def _episodes(report, config):
     return rows
 
 
-def compare_adapter_evaluations(baseline, candidate, *, legacy_settings=None):
-    """Apply the declared +/-4 reading rule; no generalization/significance claim."""
+def _compare_evaluations(baseline, candidate, *, seeds, legacy_settings=None):
     before_config = _config(baseline, legacy_settings)
     after_config = _config(candidate, legacy_settings)
     for key in SETTINGS:
         if before_config[key] != after_config[key]:
             raise ValueError(f"Evaluation settings differ: {key}")
-    before = _episodes(baseline, before_config)
-    after = _episodes(candidate, after_config)
+    before = _episodes(baseline, before_config, seeds)
+    after = _episodes(candidate, after_config, seeds)
     paired = []
     for first, second in zip(before, after, strict=True):
         if (
@@ -98,7 +97,6 @@ def compare_adapter_evaluations(baseline, candidate, *, legacy_settings=None):
     ]
     net = len(wins) - len(losses)
     return {
-        "scope": "matched development comparison; +/-4 declared reading rule, not statistical significance or held-out generalization",
         "episodes": len(paired),
         "baseline_successes": sum(r["baseline_success"] for r in paired),
         "candidate_successes": sum(r["candidate_success"] for r in paired),
@@ -106,11 +104,23 @@ def compare_adapter_evaluations(baseline, candidate, *, legacy_settings=None):
         "losses": losses,
         "net_wins": net,
         "identical_action_paths": sum(r["identical_action_path"] for r in paired),
+        "evaluation_settings": {key: before_config[key] for key in SETTINGS},
+        "paired": paired,
+    }
+
+
+def compare_adapter_evaluations(baseline, candidate, *, legacy_settings=None):
+    """Apply the declared +/-4 reading rule; no generalization/significance claim."""
+    result = _compare_evaluations(
+        baseline, candidate, seeds=COMPARISON_SEEDS, legacy_settings=legacy_settings
+    )
+    net = result["net_wins"]
+    return {
+        **result,
+        "scope": "matched development comparison; +/-4 declared reading rule, not statistical significance or held-out generalization",
         "reading": "candidate-for-replication"
         if net >= 4
         else "harmful-at-these-settings"
         if net <= -4
         else "no-detectable-effect-at-this-budget",
-        "evaluation_settings": {key: before_config[key] for key in SETTINGS},
-        "paired": paired,
     }
