@@ -34,6 +34,7 @@ from browser_control.book_flight_ids import (
 )
 from browser_control.book_flight_sft import encode_example, expert_examples
 from browser_control.lfm3 import MODEL_ID, MODEL_REVISION
+from browser_control.lfm3_optimization import InvalidLoRAGradients, checked_lora_step
 from browser_control.local_browsergym import LocalBrowserGymEnvironment
 from browser_control.manifest import RunManifest
 from browser_control.miniwob_assets import MiniwobAssetServer, ensure_miniwob_assets
@@ -191,6 +192,7 @@ def main() -> None:
             "weight_decay": 0.0,
             "max_grad_norm": 1.0,
             "initial_scale": 1.0,
+            "zero_gradient_policy": "finite zero gradients keep ordinary AdamW momentum; counted separately",
             "lora": LORA,
             "attention": "sdpa",
             "checkpointing": True,
@@ -228,6 +230,9 @@ def main() -> None:
         "prompt_tokens": [e["prompt_tokens"] for e in encoded],
         "target_tokens": [e["target_tokens"] for e in encoded],
         "updates": [],
+        "nonzero_gradient_steps": 0,
+        "zero_gradient_steps": 0,
+        "zero_gradient_norm_steps": 0,
         "example_losses": [],
         "skill_losses": {},
         "before": [],
@@ -373,32 +378,23 @@ def main() -> None:
                 skill["mean"] = skill["sum"] / skill["count"]
                 scaler.scale(loss / args.accumulation).backward()
                 del logits, loss, ids
-            scaler.unscale_(optimizer)
-            bad = [
-                name
-                for name, p in trainable.items()
-                if p.grad is None or not torch.isfinite(p.grad).all().item()
-            ]
-            if bad:
-                report["bad_gradient_names"] = bad
-                raise RuntimeError(
-                    "Missing/nonfinite gradients; optimizer step refused"
-                )
-            norm = torch.nn.utils.clip_grad_norm_(
-                trainable.values(), 1.0, error_if_nonfinite=True
+            try:
+                step = checked_lora_step(trainable, optimizer, scaler)
+            except InvalidLoRAGradients as error:
+                report["bad_gradient_names"] = error.names
+                raise
+            counter = (
+                "nonzero_gradient_steps"
+                if step["nonzero_gradient"]
+                else "zero_gradient_steps"
             )
-            if norm.item() <= 0:
-                raise RuntimeError("Zero gradient; optimizer step refused")
-            scaler.step(optimizer)
-            scaler.update()
-            if any(not torch.isfinite(p).all().item() for p in trainable.values()):
-                raise RuntimeError("Nonfinite adapter weights after update")
+            report[counter] = report.get(counter, 0) + 1
+            report["zero_gradient_norm_steps"] += int(step["zero_gradient_norm"])
             report["updates"].append(
                 {
                     "update": update + 1,
                     "mean_loss": sum(losses) / len(losses),
-                    "unclipped_gradient_norm": norm.item(),
-                    "scale": scaler.get_scale(),
+                    **step,
                     "seconds": time.monotonic() - started,
                     "peak_vram_bytes": torch.cuda.max_memory_allocated(),
                 }
