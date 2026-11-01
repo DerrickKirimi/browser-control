@@ -70,6 +70,7 @@ class LocalBrowserGymEnvironment:
         viewport_width: int | None = None,
         viewport_height: int | None = None,
         timeout_ms: float | None = None,
+        coordinate_actions: bool = False,
     ) -> LocalBrowserGymEnvironment:
         """Create an in-process MiniWoB environment without Docker or OpenEnv."""
 
@@ -84,6 +85,11 @@ class LocalBrowserGymEnvironment:
             ) from error
 
         environment_kwargs: dict[str, Any] = {"headless": headless}
+        if coordinate_actions:
+            action_set = importlib.import_module("browsergym.core.action.highlevel")
+            environment_kwargs["action_mapping"] = action_set.HighLevelActionSet(
+                subsets=["coord"], multiaction=False, strict=True
+            ).to_python_code
         if (viewport_width is None) != (viewport_height is None):
             raise ValueError("viewport width and height must be provided together")
         if viewport_width is not None and viewport_height is not None:
