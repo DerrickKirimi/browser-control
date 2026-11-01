@@ -15,6 +15,7 @@ module = runpy.run_path(
 )
 audit_history = module["audit_history"]
 history_text_matches = module["history_text_matches"]
+diagnostic_history_matches = module["diagnostic_history_matches"]
 FILL = "<tool_call><function=fill><parameter=bid>19</parameter><parameter=value>GNU</parameter></function></tool_call>"
 CLICK = "<tool_call><function=click><parameter=bid>1</parameter></function></tool_call>"
 
@@ -110,3 +111,39 @@ def test_changed_observed_state_is_rejected():
 
 def test_empty_history_does_not_count_as_verified():
     assert not history_text_matches([])
+
+
+def test_learning_diagnostic_accepts_alternative_boundaries_but_contract_does_not():
+    item = episode()
+    original = deepcopy(item)
+    item["history_audit"] = audit_history(item, Tokenizer())
+    diagnostic = {"episodes": [item], "canonical_history_ids_match": False}
+    assert diagnostic_history_matches(diagnostic, require_canonical=False)
+    assert not diagnostic_history_matches(diagnostic, require_canonical=True)
+    assert {key: value for key, value in item.items() if key != "history_audit"} == original
+
+
+def test_diagnostic_checks_every_episode_instead_of_trusting_summary():
+    good = episode()
+    good["history_audit"] = audit_history(good, Tokenizer())
+    bad = episode()
+    bad["completion_ids"][4] = 57
+    bad["history_audit"] = audit_history(bad, Tokenizer())
+    diagnostic = {"episodes": [good, bad], "canonical_history_ids_match": True}
+    assert not diagnostic_history_matches(diagnostic, require_canonical=False)
+    for episodes in ([], [{}], [good, {}]):
+        assert not diagnostic_history_matches(
+            {"episodes": episodes}, require_canonical=False
+        )
+
+
+def test_canonical_diagnostic_passes_both_modes():
+    item = episode()
+    item["completion_ids"][:2] = [42]
+    item["steps"][0]["token_ids"] = [42, 99]
+    item["steps"][1]["prompt_tokens"] = 8
+    item["history_audit"] = audit_history(item, Tokenizer())
+    for require_canonical in (False, True):
+        assert diagnostic_history_matches(
+            {"episodes": [item]}, require_canonical=require_canonical
+        )

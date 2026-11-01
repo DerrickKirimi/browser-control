@@ -44,6 +44,23 @@ def history_text_matches(rows):
     )
 
 
+def diagnostic_history_matches(diagnostic, *, require_canonical):
+    """Check every recorded episode without replacing its sampled token IDs."""
+    episodes = diagnostic.get("episodes", [])
+    if not episodes:
+        return False
+    for episode in episodes:
+        rows = episode.get("history_audit", [])
+        if not history_text_matches(rows):
+            return False
+        if require_canonical and not all(
+            row["context_ids_match"] and row.get("assistant_ids_match", True)
+            for row in rows
+        ):
+            return False
+    return True
+
+
 def audit_history(episode, tokenizer):
     """Compare actual sampled contexts/IDs with canonical evaluation histories."""
     combined = episode["prompt_ids"] + episode["completion_ids"]

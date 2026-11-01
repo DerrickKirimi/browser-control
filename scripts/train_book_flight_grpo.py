@@ -14,7 +14,11 @@ from dataclasses import asdict
 from pathlib import Path
 from types import MethodType
 
-from check_book_flight_token_rollouts import audit_history, history_text_matches
+from check_book_flight_token_rollouts import (
+    audit_history,
+    diagnostic_history_matches,
+    history_text_matches,
+)
 from preflight_lfm3_attention import LORA
 
 from browser_control.book_flight_curriculum import validate_initial_adapter
@@ -76,11 +80,11 @@ def main():
     ).hexdigest()
     if (
         diagnostic["status"] != "complete"
-        or not diagnostic["canonical_history_ids_match"]
+        or not diagnostic_history_matches(diagnostic, require_canonical=not learning)
         or diagnostic["manifest"]["config"]["adapter_sha256"] != weights_hash
         or diagnostic["manifest"]["config"]["model_revision"] != MODEL_REVISION
     ):
-        parser.error("Completed matched-adapter canonical token diagnostic required")
+        parser.error("Completed matched-adapter verified history diagnostic required")
     groups = [g for g in diagnostic["groups"] if g["reward_variation"]]
     if not groups:
         parser.error("Frozen diagnostic found no native within-group reward variation")
