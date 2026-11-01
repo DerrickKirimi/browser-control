@@ -32,6 +32,18 @@ from browser_control.miniwob_assets import MiniwobAssetServer, ensure_miniwob_as
 from browser_control.transformers_policy import DecoderConfig
 
 
+def _text(tokenizer, ids):
+    return tokenizer.decode(ids, skip_special_tokens=False)
+
+
+def history_text_matches(rows):
+    """Same words with different token boundaries are valid sampled histories."""
+    return bool(rows) and all(
+        row["context_text_match"] and row.get("assistant_text_match", True)
+        for row in rows
+    )
+
+
 def audit_history(episode, tokenizer):
     """Compare actual sampled contexts/IDs with canonical evaluation histories."""
     combined = episode["prompt_ids"] + episode["completion_ids"]
@@ -51,7 +63,12 @@ def audit_history(episode, tokenizer):
             )
         expected = chat_ids(tokenizer, messages, generation=True)
         actual = combined[: step["prompt_tokens"]]
-        row = {"turn": step["turn"], "context_ids_match": actual == expected}
+        row = {
+            "turn": step["turn"],
+            "context_ids_match": actual == expected,
+            "context_text_match": _text(tokenizer, actual)
+            == _text(tokenizer, expected),
+        }
         if step["valid_action"]:
             action = parse_book_flight_action(step["text"])
             encoded = encode_example(
@@ -59,8 +76,10 @@ def audit_history(episode, tokenizer):
                 {"messages": messages, "assistant": action.message()},
                 max_tokens=max(16384, len(combined) * 2 + 1024),
             )
-            row["assistant_ids_match"] = (
-                step["token_ids"] == encoded["input_ids"][encoded["prompt_tokens"] :]
+            canonical = encoded["input_ids"][encoded["prompt_tokens"] :]
+            row["assistant_ids_match"] = step["token_ids"] == canonical
+            row["assistant_text_match"] = _text(tokenizer, step["token_ids"]) == _text(
+                tokenizer, canonical
             )
             messages.append(action.message())
         rows.append(row)
@@ -76,12 +95,14 @@ def main():
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--seeds", nargs="+", type=int, default=[100, 132])
     parser.add_argument("--group-size", type=int, default=2)
-    parser.add_argument("--temperature", type=float, choices=(1.0, 1.5), default=1.0)
+    parser.add_argument(
+        "--temperature", type=float, choices=(1.0, 1.25, 1.5), default=1.0
+    )
     args = parser.parse_args()
     if args.output.exists():
         parser.error("Preserve earlier token-rollout evidence")
-    if not 2 <= args.group_size <= 4 or not 1 <= len(args.seeds) <= 4:
-        parser.error("Bounded diagnostic needs 1..4 seeds and group size 2..4")
+    if not 2 <= args.group_size <= 4 or not 1 <= len(args.seeds) <= 8:
+        parser.error("Bounded diagnostic needs 1..8 seeds and group size 2..4")
     if len(set(args.seeds)) != len(args.seeds) or any(
         seed not in TRAINING_SEEDS for seed in args.seeds
     ):

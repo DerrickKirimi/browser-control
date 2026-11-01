@@ -17,6 +17,7 @@ from browser_control.book_flight_curriculum import (
     validate_initial_adapter,
 )
 from browser_control.book_flight_diagnostic import (
+    DECISION_SKILLS,
     DEVELOPMENT_SEEDS,
     SAMPLING_128,
     build_probes,
@@ -434,6 +435,11 @@ def main() -> None:
             )
             report["id_sensitivity_decision"] = compare_id_scores(
                 report["after_summary"], report["permuted_after_summary"]
+            )
+            report["id_sensitivity_decision_all_skills"] = compare_id_scores(
+                report["after_summary"],
+                report["permuted_after_summary"],
+                skills=DECISION_SKILLS,
             )
         if args.seen_training_fit:
             seen = [

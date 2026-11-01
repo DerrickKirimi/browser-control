@@ -14,7 +14,7 @@ from dataclasses import asdict
 from pathlib import Path
 from types import MethodType
 
-from check_book_flight_token_rollouts import audit_history
+from check_book_flight_token_rollouts import audit_history, history_text_matches
 from preflight_lfm3_attention import LORA
 
 from browser_control.book_flight_curriculum import validate_initial_adapter
@@ -60,8 +60,8 @@ def main():
     parser.add_argument("--contract-report", type=Path)
     args = parser.parse_args()
     learning = args.updates > 1
-    if not 1 <= args.updates <= 8 or not 0 < args.learning_rate <= 1e-5:
-        parser.error("Declare 1..8 updates and learning rate in (0, 1e-5]")
+    if not 1 <= args.updates <= 24 or not 0 < args.learning_rate <= 5e-5:
+        parser.error("Declare 1..24 updates and learning rate in (0, 5e-5]")
     if learning and (args.contract_report is None or not args.task_seeds):
         parser.error(
             "Learning requires a passed real update contract and explicit tasks"
@@ -89,7 +89,7 @@ def main():
         parser.error("Only training seeds 100..9999 are allowed")
     task_seeds = args.task_seeds if learning else [seed]
     if (
-        len(task_seeds) > 8
+        len(task_seeds) > 24
         or len(set(task_seeds)) != len(task_seeds)
         or len(task_seeds) < args.updates
         or any(seed not in TRAINING_SEEDS for seed in task_seeds)
@@ -113,10 +113,10 @@ def main():
             "temperature": decoder.temperature,
             "top_p": 0.95,
         }
-        or decoder.temperature not in (1.0, 1.5)
+        or decoder.temperature not in (1.0, 1.25, 1.5)
     ):
         parser.error(
-            "Bounded smoke requires matched groups2/4, temperature1/1.5, top_p.95, cap128"
+            "Bounded smoke requires matched groups2/4, temperature1/1.25/1.5, top_p.95, cap128"
         )
     if learning:
         contract = json.loads(args.contract_report.read_text())
@@ -188,6 +188,11 @@ def main():
         temporary = args.output_dir / "training.tmp"
         temporary.write_text(json.dumps(report, indent=2, allow_nan=False) + "\n")
         temporary.replace(args.output_dir / "training.json")
+        progress = args.output_dir / "progress.tmp"
+        progress.write_text(
+            json.dumps({k: v for k, v in report.items() if k != "episodes"})
+        )
+        progress.replace(args.output_dir / "progress.json")
 
     save()
     try:
@@ -240,7 +245,7 @@ def main():
                     }
                 )
                 save()
-                if any(
+                if not learning and any(
                     not row["context_ids_match"]
                     or not row.get("assistant_ids_match", True)
                     for episode in rollout.episodes
@@ -249,6 +254,24 @@ def main():
                     raise ValueError(
                         "Raw histories differ from the canonical evaluation contract"
                     )
+                if not all(
+                    history_text_matches(episode["history_audit"])
+                    for episode in rollout.episodes
+                ):
+                    raise ValueError("Raw history text differs from canonical history")
+                report["noncanonical_tokenization_episodes"] = sum(
+                    any(
+                        not row["context_ids_match"]
+                        or not row.get("assistant_ids_match", True)
+                        for row in episode["history_audit"]
+                    )
+                    for episode in rollout.episodes
+                )
+                # Compatibility with existing reports: no sampled IDs are
+                # re-tokenized; this counts alternative token boundaries only.
+                report["retokenized_episodes"] = report[
+                    "noncanonical_tokenization_episodes"
+                ]
                 if not learning and len(set(output["native_success"])) != 2:
                     raise ValueError(
                         "Actual training group has no native reward variation"

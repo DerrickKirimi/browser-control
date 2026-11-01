@@ -34,6 +34,8 @@ def main() -> None:
             root / "scripts/collect_book_flight_confirmation.py",
             root / "scripts/train_book_flight_grpo_smoke.py",
             root / "scripts/train_book_flight_grpo.py",
+            root / "scripts/evaluate_book_flight_adapter.py",
+            root / "scripts/compare_book_flight_adapters.py",
             root / "scripts/check_lfm3_rollout_contract.py",
             root / "scripts/permute_book_flight_probes.py",
             root / "scripts/evaluate_book_flight_id_probes.py",
