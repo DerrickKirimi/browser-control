@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import time
 from dataclasses import asdict
 from pathlib import Path
@@ -49,6 +50,7 @@ def main() -> None:
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--updates", type=int, default=16)
     parser.add_argument("--accumulation", type=int, default=4)
+    parser.add_argument("--learning-rate", type=float, default=1e-4)
     parser.add_argument("--id-permutation-seed", type=int)
     parser.add_argument("--permuted-probes", type=Path)
     parser.add_argument("--initial-adapter", type=Path)
@@ -59,6 +61,8 @@ def main() -> None:
     args = parser.parse_args()
     if args.updates <= 0 or args.accumulation <= 0:
         parser.error("updates and accumulation must be positive")
+    if not math.isfinite(args.learning_rate) or args.learning_rate <= 0:
+        parser.error("learning rate must be finite and positive")
     if args.output_dir.exists():
         parser.error("Preserve existing evidence; choose a new output directory")
     gate = json.loads(args.gradient_report.read_text())
@@ -183,7 +187,7 @@ def main() -> None:
             "updates": args.updates,
             "accumulation": args.accumulation,
             "optimizer": "AdamW",
-            "learning_rate": 1e-4,
+            "learning_rate": args.learning_rate,
             "weight_decay": 0.0,
             "max_grad_norm": 1.0,
             "initial_scale": 1.0,
@@ -321,7 +325,9 @@ def main() -> None:
         report["adapter_dtypes"] = sorted({str(p.dtype) for p in trainable.values()})
         save()
         before = {name: p.detach().cpu().clone() for name, p in trainable.items()}
-        optimizer = torch.optim.AdamW(trainable.values(), lr=1e-4, weight_decay=0.0)
+        optimizer = torch.optim.AdamW(
+            trainable.values(), lr=args.learning_rate, weight_decay=0.0
+        )
         scaler = torch.amp.GradScaler("cuda", init_scale=1.0)
         torch.cuda.reset_peak_memory_stats()
         for update in range(args.updates):
