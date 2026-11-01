@@ -6,6 +6,7 @@ from dataclasses import asdict
 import pytest
 
 from browser_control.actions import InvalidActionError
+from browser_control.lfm3_vision import COORDINATE_TOOLS, build_vision_messages
 from browser_control.vision_browser import (
     CoordinateClick,
     VisionBrowserGymEnvironment,
@@ -105,3 +106,22 @@ def test_missing_or_non_rgb_pixels_are_rejected():
         env = VisionBrowserGymEnvironment(Gym(pixels))
         with pytest.raises(ValueError, match="RGB uint8"):
             env.reset(seed=23)
+
+
+def test_vision_prompt_uses_actual_pixels_goal_and_declared_coordinate_tools():
+    np = pytest.importorskip("numpy")
+    env = VisionBrowserGymEnvironment(Gym(np.zeros((10, 20, 3), dtype=np.uint8)))
+    observation = env.reset(seed=23).observation
+    messages = build_vision_messages(observation)
+    assert [item["role"] for item in messages] == ["system", "user"]
+    content = messages[1]["content"]
+    assert content[0]["image"].size == (20, 10)
+    assert content[1] == {"type": "text", "text": observation.goal}
+    assert "SECRET" not in repr(messages)
+    parameters = COORDINATE_TOOLS[0]["function"]["parameters"]
+    assert parameters["required"] == ["x", "y"]
+    assert not parameters["additionalProperties"]
+    from dataclasses import replace
+
+    with pytest.raises(ValueError, match="dimensions/mode"):
+        build_vision_messages(replace(observation, width=21))

@@ -1,0 +1,132 @@
+"""CPU vision processor/architecture check using tiny random float32 weights.
+
+No pretrained weight download, GPU execution or GRPO performance claim. Download
+the model's config, tokenizer, processor, template and Python files at the pinned
+revision into --model-source before running this offline check.
+"""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+from importlib.metadata import version
+from pathlib import Path
+
+from browser_control.lfm3_vision import (
+    COORDINATE_TOOLS,
+    MODEL_ID,
+    MODEL_REVISION,
+    build_vision_messages,
+)
+from browser_control.vision_browser import VisionObservation
+
+
+def main():
+    import torch
+    from PIL import Image
+    from transformers import AutoConfig, AutoModelForImageTextToText, AutoProcessor
+
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--model-source", type=Path, required=True)
+    parser.add_argument("--screenshot", type=Path, required=True)
+    parser.add_argument("--goal", required=True)
+    parser.add_argument("--output", type=Path, required=True)
+    args = parser.parse_args()
+    if args.output.exists():
+        parser.error("Preserve earlier contract evidence")
+    if version("transformers") != "5.21.0":
+        parser.error("This CPU contract pins Transformers5.21.0")
+    torch.set_num_threads(2)
+    torch.manual_seed(23)
+    image = Image.open(args.screenshot)
+    observation = VisionObservation(
+        args.goal, args.screenshot.read_bytes(), image.width, image.height
+    )
+    processor = AutoProcessor.from_pretrained(
+        args.model_source, trust_remote_code=True, local_files_only=True
+    )
+    inputs = processor.apply_chat_template(
+        build_vision_messages(observation),
+        tools=COORDINATE_TOOLS,
+        add_generation_prompt=True,
+        tokenize=True,
+        return_dict=True,
+        return_tensors="pt",
+        enable_thinking=False,
+    )
+    config = AutoConfig.from_pretrained(
+        args.model_source, trust_remote_code=True, local_files_only=True
+    )
+    text = config.text_config.to_dict()
+    text.update(
+        hidden_size=32, intermediate_size=64, num_hidden_layers=3,
+        num_attention_heads=4, num_key_value_heads=2, head_dim=8,
+        layer_types=["conv", "full_attention", "sliding_attention"],
+        max_position_embeddings=4096, sliding_window=16, dtype="float32",
+    )
+    vision = config.vision_config.to_dict()
+    vision.update(
+        hidden_size=32, intermediate_size=64, num_hidden_layers=3,
+        num_attention_heads=4, num_key_value_heads=2,
+        layer_types=["conv", "full_attention", "conv"], dtype="float32",
+    )
+    tiny = type(config)(
+        text_config=text, vision_config=vision, projector_hidden_size=64,
+        dtype="float32", auto_map=config.auto_map,
+    )
+    tiny._name_or_path = str(args.model_source)
+    model = AutoModelForImageTextToText.from_config(
+        tiny, trust_remote_code=True, dtype=torch.float32, attn_implementation="sdpa"
+    ).eval()
+    pixels = inputs["pixel_values"].detach().float().requires_grad_(True)
+    inputs["pixel_values"] = pixels
+    output = model(**inputs, use_cache=False, logits_to_keep=1)
+    logits = output.logits
+    if not torch.isfinite(logits).all():
+        raise ValueError("Nonfinite tiny vision logits")
+    target = processor.tokenizer.encode("click", add_special_tokens=False)[0]
+    loss = -logits[0, -1].log_softmax(-1)[target]
+    loss.backward()
+    if (
+        pixels.grad is None
+        or not torch.isfinite(pixels.grad).all()
+        or not torch.any(pixels.grad != 0)
+    ):
+        raise ValueError("Image input did not receive a finite nonzero gradient")
+    if any(p.grad is not None and not torch.isfinite(p.grad).all() for p in model.parameters()):
+        raise ValueError("Nonfinite model gradient")
+    with torch.inference_mode():
+        blank_logits = model(
+            **{**inputs, "pixel_values": torch.zeros_like(pixels)},
+            use_cache=False, logits_to_keep=1,
+        ).logits
+    difference = float((logits.detach() - blank_logits).abs().max())
+    if not torch.isfinite(blank_logits).all() or difference <= 0:
+        raise ValueError("Image ablation did not change finite logits")
+    report = {
+        "status": "passed",
+        "scope": "CPU tiny random architecture/processor forward and backward; no pretrained/GPU/GRPO result",
+        "model_id": MODEL_ID,
+        "intended_model_revision": MODEL_REVISION,
+        "packages": {name: version(name) for name in ("torch", "torchvision", "transformers", "huggingface-hub")},
+        "source_sha256": {
+            path.name: hashlib.sha256(path.read_bytes()).hexdigest()
+            for path in sorted(args.model_source.iterdir()) if path.is_file()
+        },
+        "screenshot_sha256": hashlib.sha256(observation.screenshot_png).hexdigest(),
+        "input_shapes": {key: list(value.shape) for key, value in inputs.items()},
+        "image_tokens": int((inputs["input_ids"] == config.image_token_id).sum()),
+        "parameters": sum(p.numel() for p in model.parameters()),
+        "loss": float(loss.detach()),
+        "pixel_gradient_norm": float(pixels.grad.norm()),
+        "blank_image_max_logit_difference": difference,
+        "pretrained_weights_loaded": False,
+    }
+    args.output.parent.mkdir(parents=True, exist_ok=True)
+    args.output.write_text(json.dumps(report, indent=2, allow_nan=False) + "\n")
+    print({key: report[key] for key in ("status", "parameters", "image_tokens", "pixel_gradient_norm", "blank_image_max_logit_difference")})
+
+
+if __name__ == "__main__":
+    main()

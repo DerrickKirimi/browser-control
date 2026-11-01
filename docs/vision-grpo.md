@@ -17,3 +17,25 @@ scale conversion or change the benchmark viewport.
 
 This is environment transport for the subsequent vision stage. It does not load
 a vision model or establish frozen-policy or GRPO performance.
+
+## Processor and architecture check
+
+The vision identity and native tool prompt live in `browser_control.lfm3_vision`.
+They pin `LiquidAI/LFM3-VL-2B` to revision
+`ba44bd51db20a2753f28c273a1571ccaa210d954`.
+Use a separate runtime with Transformers5.21.0, Torch2.14.1 and
+Torchvision0.29.1; the text runtime retains its own pins.
+
+Download only the pinned model's configuration, tokenizer, processor, Python files
+and `chat_template.jinja`, then run:
+
+```bash
+HF_HUB_OFFLINE=1 PYTHONPATH=src python scripts/check_lfm3_vision_contract.py \
+  --model-source PATH --screenshot SCREENSHOT.png --goal 'TASK INSTRUCTION' \
+  --output contract.json
+```
+
+This uses tiny random float32 weights and the actual processor. It checks image
+token alignment, finite logits/backward gradients and changed logits when processed
+pixels are zeroed. It records package/source/input hashes. It does not load
+pretrained weights or validate FP16/T4 inference, RL masks or vision GRPO.

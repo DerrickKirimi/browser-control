@@ -37,6 +37,7 @@ def main() -> None:
             root / "scripts/evaluate_book_flight_adapter.py",
             root / "scripts/compare_book_flight_adapters.py",
             root / "scripts/check_lfm3_rollout_contract.py",
+            root / "scripts/check_lfm3_vision_contract.py",
             root / "scripts/permute_book_flight_probes.py",
             root / "scripts/evaluate_book_flight_id_probes.py",
             root / "scripts/colab_lfm3_frozen.py",
