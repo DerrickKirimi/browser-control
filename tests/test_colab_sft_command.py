@@ -21,6 +21,13 @@ def test_id_training_enables_matched_evaluation():
     assert "--permuted-probes" in command
 
 
+def test_training_seed_is_independent_of_id_augmentation():
+    command = sft_command("python", "output", training_seed=47, evaluate_permuted=True)
+    assert command[command.index("--training-seed") + 1] == "47"
+    assert "--id-permutation-seed" not in command
+    assert "--seeds" not in command
+
+
 def test_focused_continuation_has_explicit_adapter_skills_and_pass_budget():
     command = sft_command(
         "python",

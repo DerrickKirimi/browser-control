@@ -35,6 +35,15 @@ def test_default_pass_does_not_repeat_examples():
     assert len(planned) == len({row["turn"] for row in planned}) == 3
 
 
+def test_replication_seed_changes_order_without_changing_full_pass_membership():
+    source = [{**examples()[0], "turn": index} for index in range(16)]
+    first = plan_examples(source, seed=23)
+    replica = plan_examples(source, seed=47)
+    assert first != replica
+    assert {r["turn"] for r in first} == {r["turn"] for r in replica} == set(range(16))
+    assert replica == plan_examples(source, seed=47)
+
+
 @pytest.mark.parametrize(
     "kwargs", [{"passes": 0}, {"skills": []}, {"skills": ["unknown"]}]
 )

@@ -52,6 +52,7 @@ def main() -> None:
     parser.add_argument("--updates", type=int, default=16)
     parser.add_argument("--accumulation", type=int, default=4)
     parser.add_argument("--learning-rate", type=float, default=1e-4)
+    parser.add_argument("--training-seed", type=int, default=23)
     parser.add_argument("--id-permutation-seed", type=int)
     parser.add_argument("--permuted-probes", type=Path)
     parser.add_argument("--initial-adapter", type=Path)
@@ -64,6 +65,8 @@ def main() -> None:
         parser.error("updates and accumulation must be positive")
     if not math.isfinite(args.learning_rate) or args.learning_rate <= 0:
         parser.error("learning rate must be finite and positive")
+    if not 0 <= args.training_seed < 2**32:
+        parser.error("training seed must be a nonnegative32-bit integer")
     if args.output_dir.exists():
         parser.error("Preserve existing evidence; choose a new output directory")
     gate = json.loads(args.gradient_report.read_text())
@@ -108,6 +111,7 @@ def main() -> None:
         examples,
         skills=args.focus_skills,
         passes=args.passes,
+        seed=args.training_seed,
         replay_per_skill=args.replay_per_skill,
     )
     needed = args.updates * args.accumulation
@@ -166,7 +170,7 @@ def main() -> None:
         policy.model.peft_config["default"].revision = MODEL_REVISION
     policy.max_prompt_tokens = 16384
     torch = policy.torch
-    torch.manual_seed(23)
+    torch.manual_seed(args.training_seed)
     encoded = [
         encode_example(policy.tokenizer, example) for example in examples[:needed]
     ]
@@ -177,7 +181,7 @@ def main() -> None:
         "model_revision": MODEL_REVISION,
         "scope": f"Bounded {run_label} SFT; no held-out task estimate",
         "config": {
-            "seed": 23,
+            "seed": args.training_seed,
             "run_label": run_label,
             "focus_skills": args.focus_skills,
             "passes": args.passes,
@@ -241,7 +245,7 @@ def main() -> None:
         "after_rollouts": [],
     }
     report["manifest"] = RunManifest(
-        f"lfm3-book-flight-sft-{run_label}", 23, report["config"]
+        f"lfm3-book-flight-sft-{run_label}", args.training_seed, report["config"]
     ).to_dict()
     if args.permuted_probes is not None:
         report["inputs_sha256"]["permuted_probes"] = hashlib.sha256(
@@ -301,7 +305,7 @@ def main() -> None:
     save()
     try:
         evaluate("before")
-        torch.manual_seed(23)
+        torch.manual_seed(args.training_seed)
         model = (
             policy.model
             if args.initial_adapter is not None
