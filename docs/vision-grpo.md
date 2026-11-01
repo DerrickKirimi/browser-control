@@ -37,5 +37,33 @@ HF_HUB_OFFLINE=1 PYTHONPATH=src python scripts/check_lfm3_vision_contract.py \
 
 This uses tiny random float32 weights and the actual processor. It checks image
 token alignment, finite logits/backward gradients and changed logits when processed
-pixels are zeroed. It records package/source/input hashes. It does not load
+pixels are zeroed. The frozen policy wrapper additionally checks bounded cached
+generation, every next-token forward's logits, frozen weights, raw prompt/completion
+IDs and rejection of deliberately injected nonfinite logits. It records
+package/source/input hashes. It does not load
 pretrained weights or validate FP16/T4 inference, RL masks or vision GRPO.
+
+## Frozen one-click evaluation
+
+Use `requirements-lfm3-vision.txt` in a separate Python3.12 runtime. It contains
+inference pins; vision GRPO is not validated by installing it. The loader requires
+a T4 and uses FP16 with SDPA, the pinned processor/model revision, disabled thinking,
+a2048token prompt budget and a128token completion cap.
+
+```bash
+python scripts/evaluate_lfm3_vision.py --output frozen.json \
+  --decoder greedy --image-condition screenshot
+```
+
+Tasks are `click-color`, `click-shape` and `click-shades`, with development seeds
+30–59 by default. `--decoder sampling` explicitly uses temperature1/top_p.95;
+checkpoint top-k and repetition penalties are cleared. `--image-condition white`
+replaces pixels with a white image while keeping the task instruction and image
+dimensions. Use the same tasks, seeds and generation rule for both image conditions.
+
+Each episode records source/input image hashes and PNGs, actual prompt/completion
+IDs, image grid, finite-logit checks, normalized/rendered coordinates and native
+terminal reward. Invalid outputs are counted without repair or an environment
+action. Numerical failures abort the run. Per-task success counts and Wilson
+intervals are recomputed from native outcomes. This remains development evaluation;
+neither the CLI nor the CPU contract establishes a pretrained vision or RL result.
