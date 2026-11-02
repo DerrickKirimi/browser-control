@@ -41,6 +41,7 @@ def main() -> None:
             root / "scripts/check_lfm3_vision_trl_contract.py",
             root / "scripts/evaluate_lfm3_vision.py",
             root / "scripts/check_lfm3_vision_variation.py",
+            root / "scripts/train_lfm3_vision_grpo.py",
             root / "scripts/permute_book_flight_probes.py",
             root / "scripts/evaluate_book_flight_id_probes.py",
             root / "scripts/colab_lfm3_frozen.py",
