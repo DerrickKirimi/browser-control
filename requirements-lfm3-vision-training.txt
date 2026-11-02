@@ -1,0 +1,6 @@
+# Validated on a tiny CPU model only; pretrained T4 training isn't yet tested.
+-r requirements-lfm3-vision.txt
+trl==1.16.0
+peft==0.21.2
+datasets==5.1.0
+fsspec==2026.7.0
