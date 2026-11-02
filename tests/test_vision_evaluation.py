@@ -8,6 +8,7 @@ import pytest
 from browser_control.lfm3_vision import VisionGeneration
 from browser_control.vision_browser import VisionObservation, VisionStep
 from browser_control.vision_evaluation import (
+    classify_variation_group,
     collect_vision_episode,
     policy_observation,
     summarize_vision_episodes,
@@ -141,3 +142,62 @@ def test_native_summary_and_duplicate_seed_rejection(tmp_path):
 def test_unknown_image_condition_is_rejected():
     with pytest.raises(ValueError, match="Unknown image condition"):
         policy_observation(observation(), "DOM")
+
+
+def _variation_row(outcome, token=1):
+    return {
+        "task_seed": 100,
+        "success": outcome == "success",
+        "done": outcome != "malformed",
+        "native_reward": float(outcome == "success"),
+        "valid_action": outcome != "malformed",
+        "generation": {"completion_token_ids": [token]},
+    }
+
+
+def test_only_success_against_a_wrong_click_is_a_decision():
+    decision = classify_variation_group(
+        [_variation_row("success"), _variation_row("wrong-click", 2)]
+    )
+    assert decision["decision_varied"] and decision["native_reward_varied"]
+    assert decision["token_sequences"] == 2
+    formatting = classify_variation_group(
+        [_variation_row("success"), _variation_row("malformed", 2)]
+    )
+    assert formatting["native_reward_varied"] and not formatting["decision_varied"]
+    misses = classify_variation_group(
+        [_variation_row("wrong-click"), _variation_row("malformed", 2)]
+    )
+    assert not misses["native_reward_varied"] and not misses["decision_varied"]
+
+
+def test_variation_group_refuses_mixed_tasks_and_false_labels():
+    other = {**_variation_row("success"), "task_seed": 101}
+    with pytest.raises(ValueError, match="one task"):
+        classify_variation_group([_variation_row("success"), other])
+    with pytest.raises(ValueError, match="native"):
+        classify_variation_group([{**_variation_row("malformed"), "success": True}])
+
+
+def test_requested_rng_and_logprob_recording_reach_the_policy(tmp_path):
+    class Policy:
+        calls = []
+
+        def check_logits(self, _observation):
+            return {"finite": True}
+
+        def generate(self, _observation, **kwargs):
+            self.calls.append(kwargs)
+            return VisionGeneration(CLICK, 0.1, 2, 1, (1, 2), (3,), ((1, 2, 2),), 1)
+
+    row = collect_vision_episode(
+        Environment(),
+        Policy(),
+        100,
+        "screenshot",
+        tmp_path,
+        generation_seed=77,
+        record_logprobs=True,
+    )
+    assert Policy.calls == [{"seed": 77, "record_logprobs": True}]
+    assert row["generation_seed"] == 77

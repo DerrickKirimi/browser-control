@@ -38,8 +38,18 @@ def _save_image(path, data):
         path.write_bytes(data)
 
 
-def collect_vision_episode(environment, policy, seed, image_condition, image_directory):
+def collect_vision_episode(
+    environment,
+    policy,
+    seed,
+    image_condition,
+    image_directory,
+    *,
+    generation_seed=None,
+    record_logprobs=False,
+):
     """One reset, one model call and at most one validated coordinate action."""
+    generation_seed = seed * 16 if generation_seed is None else generation_seed
     before = environment.reset(seed=seed)
     if before.done:
         raise ValueError("A visual task must start before termination")
@@ -55,7 +65,11 @@ def collect_vision_episode(environment, policy, seed, image_condition, image_dir
     numerical = policy.check_logits(observation)
     if not numerical["finite"]:
         raise RuntimeError("Nonfinite visual policy; no success statistics")
-    output = policy.generate(observation, seed=seed * 16)
+    output = policy.generate(
+        observation,
+        seed=generation_seed,
+        **({"record_logprobs": True} if record_logprobs else {}),
+    )
     if (
         not 0 < output.completion_tokens <= 128
         or output.completion_tokens != len(output.completion_token_ids)
@@ -67,7 +81,7 @@ def collect_vision_episode(environment, policy, seed, image_condition, image_dir
         raise ValueError("Invalid raw generation evidence")
     row = {
         "task_seed": seed,
-        "generation_seed": seed * 16,
+        "generation_seed": generation_seed,
         "goal": observation.goal,
         "image_condition": image_condition,
         "screenshot_filename": original_name,
@@ -107,6 +121,32 @@ def collect_vision_episode(environment, policy, seed, image_condition, image_dir
         action_error=after.observation.last_action_error,
     )
     return row
+
+
+def episode_outcome(row):
+    """Separate a wrong visual decision from output that never reached the page."""
+    if row["success"] != bool(row["done"] and row["native_reward"] > 0):
+        raise ValueError("Success differs from the native terminal outcome")
+    if row["success"]:
+        return "success"
+    return "wrong-click" if row["valid_action"] else "malformed"
+
+
+def classify_variation_group(rows):
+    """Describe one task's samples; only success against a wrong click is a decision."""
+    if not rows or len({row["task_seed"] for row in rows}) != 1:
+        raise ValueError("A variation group holds samples of one task")
+    outcomes = [episode_outcome(row) for row in rows]
+    kinds = set(outcomes)
+    return {
+        "task_seed": rows[0]["task_seed"],
+        "outcomes": outcomes,
+        "token_sequences": len(
+            {tuple(row["generation"]["completion_token_ids"]) for row in rows}
+        ),
+        "native_reward_varied": "success" in kinds and len(kinds) > 1,
+        "decision_varied": {"success", "wrong-click"} <= kinds,
+    }
 
 
 def summarize_vision_episodes(episodes):

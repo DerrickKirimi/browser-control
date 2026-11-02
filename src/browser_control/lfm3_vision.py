@@ -70,6 +70,10 @@ class VisionGeneration:
     completion_token_ids: tuple[int, ...]
     image_grid_thw: tuple[tuple[int, ...], ...]
     generation_logits_checks: int
+    # Selected-token log probabilities: "sampling" after decoder processing such
+    # as top_p, "raw" from the unprocessed logits. Recorded only on request.
+    sampling_logprobs: tuple[float, ...] | None = None
+    raw_logprobs: tuple[float, ...] | None = None
 
 
 @dataclass(slots=True)
@@ -170,7 +174,13 @@ class LFM3VisionPolicy:
             ),
         }
 
-    def generate(self, observation: VisionObservation, *, seed: int):
+    def generate(
+        self,
+        observation: VisionObservation,
+        *,
+        seed: int,
+        record_logprobs: bool = False,
+    ):
         self.torch.manual_seed(seed)
         cuda = self.device.startswith("cuda")
         if cuda:
@@ -192,18 +202,44 @@ class LFM3VisionPolicy:
         try:
             with self.torch.inference_mode():
                 generated = self.model.generate(
-                    **encoded, **self.decoder.generation_kwargs()
+                    **encoded,
+                    **self.decoder.generation_kwargs(),
+                    **(
+                        {
+                            "return_dict_in_generate": True,
+                            "output_scores": True,
+                            "output_logits": True,
+                        }
+                        if record_logprobs
+                        else {}
+                    ),
                 )
         finally:
             hook.remove()
         if cuda:
             self.torch.cuda.synchronize()
         elapsed = time.monotonic() - started
-        completion = generated[0, length:]
+        sequences = generated.sequences if record_logprobs else generated
+        completion = sequences[0, length:]
         if checks != int(completion.shape[-1]):
             raise RuntimeError(
                 "Vision generation did not check every next-token forward"
             )
+        selected = {}
+        if record_logprobs:
+
+            def logprobs(rows):
+                if len(rows) != int(completion.shape[-1]):
+                    raise ValueError("Generation scores do not match generated IDs")
+                return tuple(
+                    float(row[0].float().log_softmax(-1)[token].item())
+                    for row, token in zip(rows, completion, strict=True)
+                )
+
+            selected = {
+                "sampling_logprobs": logprobs(generated.scores),
+                "raw_logprobs": logprobs(generated.logits),
+            }
         return VisionGeneration(
             text=self.processor.tokenizer.decode(completion, skip_special_tokens=True),
             generation_seconds=elapsed,
@@ -215,4 +251,5 @@ class LFM3VisionPolicy:
                 tuple(row) for row in encoded["image_grid_thw"].tolist()
             ),
             generation_logits_checks=checks,
+            **selected,
         )
