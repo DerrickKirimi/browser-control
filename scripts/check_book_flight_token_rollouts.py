@@ -104,6 +104,13 @@ def audit_history(episode, tokenizer):
     return rows
 
 
+def rollout_decoder(temperature, top_p):
+    """Decoder for one collection; top_p 1.0 samples the unclipped distribution."""
+    return DecoderConfig(
+        "token-rollout", True, 128, temperature=temperature, top_p=top_p
+    )
+
+
 def main():
     from peft import PeftModel
     from preflight_lfm3_attention import LORA
@@ -116,6 +123,7 @@ def main():
     parser.add_argument(
         "--temperature", type=float, choices=(1.0, 1.25, 1.5), default=1.0
     )
+    parser.add_argument("--top-p", type=float, choices=(0.95, 1.0), default=0.95)
     args = parser.parse_args()
     if args.output.exists():
         parser.error("Preserve earlier token-rollout evidence")
@@ -131,9 +139,7 @@ def main():
         revision=MODEL_REVISION,
         model_id=MODEL_ID,
     )
-    decoder = DecoderConfig(
-        "token-rollout", True, 128, temperature=args.temperature, top_p=0.95
-    )
+    decoder = rollout_decoder(args.temperature, args.top_p)
     snapshot_path = Path("source-manifest.json")
     snapshot = json.loads(snapshot_path.read_text()) if snapshot_path.exists() else None
     if snapshot is not None:

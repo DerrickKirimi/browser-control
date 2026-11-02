@@ -159,3 +159,13 @@ def test_legacy_canonical_ids_prove_text_identity_without_new_text_fields():
     assert diagnostic_history_matches(diagnostic, require_canonical=False)
     rows[0]["context_text_match"] = False
     assert not diagnostic_history_matches(diagnostic, require_canonical=False)
+
+
+def test_rollout_decoder_passes_the_declared_top_p():
+    decoder = module["rollout_decoder"](1.0, 1.0)
+    assert decoder.generation_kwargs() == {
+        "do_sample": True,
+        "max_new_tokens": 128,
+        "temperature": 1.0,
+        "top_p": 1.0,
+    }
