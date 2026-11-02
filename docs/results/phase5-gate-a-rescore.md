@@ -68,11 +68,7 @@ therefore deliberately narrow.
 
 - Adapter SHA-256:
   `5b76ee537e2f39115090f7cf3afec6b6e766fe92a1376f80a2713e8de35f66ea`
-- The hash matches `adapter_model.safetensors` in the original Phase 5 ZIP.
-- Evaluator commit: `cf3dea74319dd506d25ac4845755948b6e95c360` — paired
-  frozen-versus-LoRA evaluation implementation with four declared decoder conditions
-- Executed notebook commit: `46b1158` — saved Colab outputs from that paired decoder
-  comparison
+- The hash matches `adapter_model.safetensors` in the pilot run's adapter archive.
 - GPU: Tesla T4, compute capability 7.5
 - PyTorch: 2.11.0+cu128
 - Transformers: 4.57.3
@@ -84,26 +80,12 @@ therefore deliberately narrow.
 - vLLM and OpenEnv: not installed
 - Stochastic generation seeds: 2000–2049, paired across frozen and trained policies
 
-The raw manifest-bearing report is retained outside Git at
-`artifacts/phase5/gate-a/phase5-gate-a-rescore.json`. The executed notebook is
+The raw report is `lfm2-click-test/gate-a-rescore.json` in the
+[evidence bundle](https://huggingface.co/datasets/Aptheos/lfm-browser-control-evidence). The executed notebook is
 `notebooks/phase5_gate_a_rescore.ipynb`.
 
-## Decision
+## Reading
 
-Cancel the proposed component-reward redesign. Its causal rationale is no longer
-supported by the evidence.
-
-The next sequence is:
-
-1. Make the training decoder canonical for stochastic evaluation while reporting
-   greedy output separately.
-2. Remove repetition penalty from this task's evaluation path.
-3. Add a decoder-parity test and ensure every executed run writes its manifest.
-4. Verify TRL 0.29 `steps_per_generation` semantics with a production-facing contract
-   test.
-5. Configure one properly powered seed-23 run with deliberate group batching.
-6. Run seeds 47 and 71 only after that configuration is frozen.
-
-The central result is positive, but the stronger engineering story is the correction:
-a mismatched deployment decoder hid learning that was present under stochastic
-sampling.
+A mismatched evaluation decoder hid learning that was present under stochastic sampling.
+Later runs use the training decoder for stochastic evaluation, and report greedy output
+separately.

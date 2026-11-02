@@ -1,5 +1,5 @@
-# Separate runtime: version set from Cookbook 3d0cbcb's LFM3 GRPO notebook.
-# Install the project with --no-deps; do not resolve the legacy model/training extras.
+# LFM3 text runtime, using the versions from Liquid AI's LFM3 GRPO cookbook notebook.
+# Install the project with --no-deps; the pyproject extras pin the older LFM2 runtime.
 torch==2.14.1
 torchvision==0.29.1
 torchao==0.18.0

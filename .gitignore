@@ -6,10 +6,5 @@ __pycache__/
 artifacts/
 checkpoints/
 wandb/
-/frozen-policy.json
-/smoke-report*.json
-/phase4-smoke*-adapter*.zip
-/controlled-report*.json
-/phase5-*-adapter*.zip
-/docs/results/*-report.json
-/docs/results/*-adapter.zip
+evidence/
+adapters/

@@ -6,7 +6,7 @@ errors. Accessibility trees and browser element IDs are excluded from its policy
 observation. The environment extra, Pillow, NumPy and Chromium are required.
 
 `parse_coordinate_click` accepts exactly one native XML `click` with integer
-parameters `x` and `y` in0–1000. Coordinates map to the inclusive screenshot pixel
+parameters `x` and `y` in 0–1000. Coordinates map to the inclusive screenshot pixel
 range. The environment uses BrowserGym's coordinate action set; BrowserGym maps
 its enlarged screenshot pixels back to page coordinates. Do not apply an extra
 scale conversion or change the benchmark viewport.
@@ -23,8 +23,8 @@ a vision model or establish frozen-policy or GRPO performance.
 The vision identity and native tool prompt live in `browser_control.lfm3_vision`.
 They pin `LiquidAI/LFM3-VL-2B` to revision
 `ba44bd51db20a2753f28c273a1571ccaa210d954`.
-Use a separate runtime with Transformers5.21.0, Torch2.14.1 and
-Torchvision0.29.1; the text runtime retains its own pins.
+Use a separate runtime with Transformers 5.21.0, Torch 2.14.1 and
+Torchvision 0.29.1; the text runtime retains its own pins.
 
 Download only the pinned model's configuration, tokenizer, processor, Python files
 and `chat_template.jinja`, then run:
@@ -45,10 +45,10 @@ pretrained weights or validate FP16/T4 inference, RL masks or vision GRPO.
 
 ## Frozen one-click evaluation
 
-Use `requirements-lfm3-vision.txt` in a separate Python3.12 runtime. It contains
+Use `requirements-lfm3-vision.txt` in a separate Python 3.12 runtime. It contains
 inference pins; vision GRPO is not validated by installing it. The loader requires
 a T4 and uses FP16 with SDPA, the pinned processor/model revision, disabled thinking,
-a2048token prompt budget and a128token completion cap.
+a 2048-token prompt budget and a 128-token completion cap.
 
 ```bash
 python scripts/evaluate_lfm3_vision.py --output frozen.json \
@@ -56,7 +56,7 @@ python scripts/evaluate_lfm3_vision.py --output frozen.json \
 ```
 
 Tasks are `click-color`, `click-shape` and `click-shades`, with development seeds
-30–59 by default. `--decoder sampling` explicitly uses temperature1/top_p.95;
+30–59 by default. `--decoder sampling` explicitly uses temperature 1/top_p .95;
 checkpoint top-k and repetition penalties are cleared. `--image-condition white`
 replaces pixels with a white image while keeping the task instruction and image
 dimensions. Use the same tasks, seeds and generation rule for both image conditions.
@@ -70,7 +70,7 @@ neither the CLI nor the CPU contract establishes a pretrained vision or RL resul
 
 ## Multimodal trainer contract
 
-`requirements-lfm3-vision-training.txt` adds TRL1.16, PEFT and datasets to the
+`requirements-lfm3-vision-training.txt` adds TRL 1.16, PEFT and datasets to the
 separate vision runtime. `StagedVisionRollout` collects images before TRL prepares
 its multimodal tensors, then returns the original sampled prompt/completion IDs.
 The messages used to prepare image tensors do not replace those IDs.
@@ -80,7 +80,7 @@ image count and group-normalized native advantage against its collected row.
 Live autograd hooks reject nonfinite policy gradients, gradients on external or
 padding tokens, and missing generated-token gradients for nonzero advantages.
 This path currently supports float32/float16 image tensors, unit native rewards,
-one-iteration GRPO, group reward scaling and beta0.
+one-iteration GRPO, group reward scaling and beta 0.
 
 ```bash
 HF_HUB_OFFLINE=1 PYTHONPATH=src python scripts/check_lfm3_vision_trl_contract.py \

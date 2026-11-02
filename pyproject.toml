@@ -1,7 +1,7 @@
 [project]
 name = "browser-control-rl"
 version = "0.1.0"
-description = "A validated, Colab-first GRPO pipeline for browser control"
+description = "Training small Liquid models to control a browser, with verifiable evaluation"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = []

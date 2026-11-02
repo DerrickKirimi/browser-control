@@ -208,7 +208,7 @@ class LFM3Policy:
 
 
 def frozen_gate(conditions: list[dict[str, Any]]) -> dict[str, Any]:
-    """Require the complete preregistered matrix before making a decision."""
+    """Require the complete matrix before making a decision."""
     expected = {
         (interface, mode, seed)
         for interface in ("strict-text", "native-tools")

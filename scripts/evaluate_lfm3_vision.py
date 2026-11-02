@@ -10,13 +10,7 @@ from dataclasses import asdict
 from importlib.metadata import version
 from pathlib import Path
 
-from browser_control.lfm3_vision import (
-    MODEL_ID,
-    MODEL_REVISION,
-    LFM3VisionPolicy,
-    adapter_hash,
-    attach_adapter,
-)
+from browser_control.lfm3_vision import MODEL_ID, MODEL_REVISION, LFM3VisionPolicy
 from browser_control.manifest import RunManifest
 from browser_control.miniwob_assets import MiniwobAssetServer, ensure_miniwob_assets
 from browser_control.transformers_policy import DecoderConfig
@@ -38,18 +32,17 @@ def main():
     parser.add_argument("--seeds", type=int, nargs="+", default=list(range(30, 60)))
     parser.add_argument("--decoder", choices=("greedy", "sampling"), required=True)
     parser.add_argument("--image-condition", choices=IMAGE_CONDITIONS, required=True)
-    parser.add_argument("--adapter", type=Path)
     args = parser.parse_args()
     if args.output.exists():
         parser.error("Preserve earlier evaluation evidence")
     if (
-        len(args.seeds) > 40
+        len(args.seeds) > 30
         or len(set(args.seeds)) != len(args.seeds)
         or any(not 0 <= seed < 10000 for seed in args.seeds)
         or len(set(args.tasks)) != len(args.tasks)
     ):
         parser.error(
-            "Use distinct development tasks and at most 40 distinct seeds 0..9999"
+            "Use distinct development tasks and at most30distinct seeds0..9999"
         )
     decoder = (
         DecoderConfig("greedy", False, 128)
@@ -74,7 +67,6 @@ def main():
                 "model_id": MODEL_ID,
                 "model_revision": MODEL_REVISION,
                 "tasks": args.tasks,
-                "adapter_sha256": adapter_hash(args.adapter),
                 "task_seeds": args.seeds,
                 "decoder": asdict(decoder),
                 "image_condition": args.image_condition,
@@ -117,7 +109,6 @@ def main():
     save()
     try:
         policy = LFM3VisionPolicy.load(decoder)
-        attach_adapter(policy, args.adapter)
         payload["effective_generation_config"] = (
             policy.model.generation_config.to_dict()
         )

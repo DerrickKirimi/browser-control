@@ -10,13 +10,7 @@ from dataclasses import asdict
 from importlib.metadata import version
 from pathlib import Path
 
-from browser_control.lfm3_vision import (
-    MODEL_ID,
-    MODEL_REVISION,
-    LFM3VisionPolicy,
-    adapter_hash,
-    attach_adapter,
-)
+from browser_control.lfm3_vision import MODEL_ID, MODEL_REVISION, LFM3VisionPolicy
 from browser_control.manifest import RunManifest
 from browser_control.miniwob_assets import MiniwobAssetServer, ensure_miniwob_assets
 from browser_control.transformers_policy import DecoderConfig
@@ -39,7 +33,6 @@ def main():
     parser.add_argument("--seeds", type=int, nargs="+", required=True)
     parser.add_argument("--group-size", type=int, default=4)
     parser.add_argument("--top-p", type=float, required=True)
-    parser.add_argument("--adapter", type=Path)
     args = parser.parse_args()
     if args.output.exists():
         parser.error("Preserve earlier evidence")
@@ -71,7 +64,6 @@ def main():
                 "model_id": MODEL_ID,
                 "model_revision": MODEL_REVISION,
                 "task": args.task,
-                "adapter_sha256": adapter_hash(args.adapter),
                 "task_seeds": args.seeds,
                 "group_size": args.group_size,
                 "decoder": asdict(decoder),
@@ -99,7 +91,6 @@ def main():
     save()
     try:
         policy = LFM3VisionPolicy.load(decoder)
-        attach_adapter(policy, args.adapter)
         payload["effective_generation_config"] = (
             policy.model.generation_config.to_dict()
         )

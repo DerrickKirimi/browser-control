@@ -1,14 +1,9 @@
 # Phase 4 two-update smoke result
 
-Date: 2026-07-21  
-Colab notebook commit: `33b81c7` — executed two-update run with zero reward variance
-and zero gradients
+Date: 2026-07-21
 
-Training-code commit: `c0dee8a` — idempotent Colab repository setup and smoke-run
-implementation used for this attempt
-
-Raw local artifact: `smoke-report.json` (ignored)  
-Adapter archive: `phase4-smoke-adapter.zip` (ignored)
+Raw report: `lfm2-click-test/smoke-first-report.json` in the
+[evidence bundle](https://huggingface.co/datasets/Aptheos/lfm-browser-control-evidence).
 
 ## Runtime
 
@@ -57,18 +52,13 @@ click(<button id="13">Click Me!</button>)
 ```
 
 This matches the frozen baseline failure mode and is expected because the smoke
-run had no learning signal. Phase 4 remains in progress until a second smoke run
-produces reward diversity, finite nonzero gradients, and a confirmed LoRA update.
+run had no learning signal, which is why I ran a second smoke run to get reward
+diversity, finite nonzero gradients, and a confirmed LoRA update.
 
 ## Nonzero-update rerun
 
 - Date: 2026-07-21
-- Colab notebook commit: `e844418` — successful executed FP32 run with finite nonzero
-  gradients and changed LoRA tensors
-- Training-code commit: `36da0ad` — FP32 nonzero-update configuration used by the
-  successful rerun
-- Raw local artifact: `smoke-report (2).json` (ignored)
-- Adapter archive: `phase4-smoke-nonzero-adapter.zip` (ignored)
+- Raw report: `lfm2-click-test/smoke-nonzero-report.json` in the evidence bundle
 
 The second run used the temporary formatting curriculum and FP32 after the first
 curriculum attempt produced NaN FP16 gradient norms.
@@ -88,6 +78,5 @@ curriculum attempt produced NaN FP16 gradient norms.
 The four sampled curriculum rewards were distinct enough to produce a real update,
 but none of the completions passed the strict action parser. The two-seed reloaded
 evaluation remained 0/2 with the original malformed-action failure. This is not
-evidence of task learning; it closes Phase 4 because the complete optimizer and
-checkpoint path now has a verified nonzero update. Phase 5 must train for longer
-and evaluate only with strict environment-success reward.
+evidence of task learning. It does verify a nonzero update through the complete
+optimizer and checkpoint path.

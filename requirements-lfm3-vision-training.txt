@@ -1,4 +1,4 @@
-# CPU architecture/TRL contract validated; pretrained T4/browser training pending.
+# Validated on a tiny CPU model only; pretrained T4 training isn't yet tested.
 -r requirements-lfm3-vision.txt
 trl==1.16.0
 peft==0.21.2
