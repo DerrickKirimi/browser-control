@@ -4,8 +4,7 @@ I train small [Liquid AI](https://huggingface.co/LiquidAI) models, [LFM3-VL-2B](
 [LFM3-1.7B](https://huggingface.co/LiquidAI/LFM3-1.7B) and [LFM2-350M](https://huggingface.co/LiquidAI/LFM2-350M), to operate a
 real browser through [MiniWoB++](https://miniwob.farama.org/) tasks in [BrowserGym](https://github.com/ServiceNow/BrowserGym),
 on the free T4 GPUs of [Google Colab](https://colab.research.google.com/) and [Kaggle](https://www.kaggle.com/). Each turn the model sees the page, as a screenshot or as text, and emits one action toward
-completing the task. Success is decided by the reward that each MiniWoB++ task computes itself, not by me or by another
-model.
+completing the task. Success is decided by the reward that each MiniWoB++ task computes itself.
 
 - **From pixels alone**, [LFM3-VL-2B tuned with SFT, then GRPO](https://huggingface.co/Aptheos/lfm3-vl-2b-click-sequence-sft)
   clicks through a two-button sequence on **92 of 100** held-out tasks greedy and **83 of 100** sampled at temperature 1;
@@ -214,6 +213,17 @@ well-formed but only 24 matched an action that reaches that step's outcome; with
 was 32 of 120. That's a result for an untuned general model in this one-call format, not a measure of what LFM3 can do
 elsewhere. The counts are in the evidence dataset (`lfm3-book-flight/base-gate.json`,
 `lfm3-book-flight/development-diagnostic.json`), and `scripts/verify_reported_numbers.py` recounts each of them.
+
+On the same 30 development tasks the SFT adapter was tuned on (seeds 70–99), with an identical harness, the base model
+succeeded on none and the adapter on 25. Here is one of them, side by side:
+
+<p align="center">
+  <img src="docs/media/compare-book-flight-base-vs-sft-71.gif" width="560"
+       alt="Development task 71: the base model answers with prose, not a valid action; the SFT adapter fills the form and books">
+</p>
+
+These are development tasks, so this pairing illustrates the difference rather than estimating it. The held-out number
+is the next paragraph's.
 
 An SFT adapter trained on traces from a scripted solver then succeeded on 160 of 200 reserved tasks, which were
 evaluated once, after the policy and decoder were locked. All 1,823 tool calls were well-formed, and 21 of them failed in

@@ -53,9 +53,9 @@ def replay(env, episode: dict, directory: Path, upscale: int = 1, scale: float =
     timeline, reward, done = [], 0.0, False
     for number, step in enumerate(episode["steps"], start=1):
         labels = element_labels(step["observation"].get("accessibility_tree", ""))
-        caption = f"Step {number}: {describe_call(step.get('text', ''), labels)}"
-        if not step.get("valid_action"):
-            caption += " (not a valid action)"
+        described = describe_call(step.get("text", ""), labels)
+        # The verdict comes first, so a long invalid answer can't push it out of the caption.
+        caption = f"Step {number}: {described}" if step.get("valid_action") else f"Step {number}: not a valid action; {described}"
         if step.get("valid_action") and step.get("action") and not done:
             result = env.step(step["action"])
             reward, done = result.reward, result.done

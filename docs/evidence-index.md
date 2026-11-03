@@ -20,6 +20,7 @@ the `release-check` reruns don't. The reruns used the clean copy of this reposit
 | Rejected pass 9/30 | `lfm3-book-flight/rejected-broader-pass/` | Episodes and paired rows |
 | Failed first attempt at stage 3 | `lfm3-book-flight/stage-3-first-attempt/training.json` | Stopped after 21 updates |
 | Default loss scale overflows | `lfm3-book-flight/inputs/gradient-check.json` | `attempts` |
+| Base 0/30 against SFT 25/30 on the same development tasks | `lfm3-book-flight/base-development-matched/report.json`, `primary-sft/development.json` | Seeds 70–99; the two manifests' settings are identical apart from the adapter |
 | Base-model planning failure | `lfm3-book-flight/development-diagnostic.json` | `cells.C0`, `C1`, `C2` |
 | First base-gate attempt | `lfm3-book-flight/base-gate-first-attempt.json` | 23 episodes before running out of memory |
 | One-update trainer check | `lfm3-book-flight/one-update-contract/*.json` | Tensors changed, base hashes, gradient and mask checks |

@@ -32,7 +32,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from browser_control.book_flight_diagnostic import summarize_rollouts  # noqa: E402
 
-BUNDLE_SHA256 = "9530b2ae78cda74463895e0bb048a40eb1f4143261ad1dc93cadd678eb715c7e"
+BUNDLE_SHA256 = "b1b8e1c0a291a9bdcdba8ad1f07aea1b3416dd9e63e879b307c54f18229737a1"
 Z = 1.959963984540054
 PRIMARY_SFT = "53f80cc120b5b096f4c1d7d3d7490f13ff6c00e2f2877213b213e54e35791135"
 REPLICA_SFT = "9840e091b5b9549d89de3a0281c7351c9d498aab0352639fbc316ac8855d0aa1"
@@ -201,6 +201,16 @@ def check_base_gate(c: Checks) -> None:
     capped = sum(e["stop_reason"] == "invalid-action" and e["steps"][-1]["completion_tokens"] == 128 for e in episodes)
     c.equal("base gate invalid outputs at the cap", capped, 97)
     c.equal("base gate upper Wilson", round(wilson(wins(base), len(episodes))[1] * 100, 1), 3.7)
+    matched = c.load(f"{BOOK}/base-development-matched/report.json")
+    primary = c.load(f"{BOOK}/primary-sft/development.json")
+    config = {k: v for k, v in matched["manifest"]["config"].items() if k not in ("adapter_sha256",)}
+    reference = {k: v for k, v in primary["manifest"]["config"].items() if k not in ("adapter_sha256",)}
+    c.equal("matched base development cohort and harness equal the SFT development run",
+            (seeds(matched), matched["manifest"]["config"]["adapter_sha256"], config == reference), (list(range(70, 100)), None, True))
+    base_wins = {e["task_seed"]: e["success"] for e in matched["episodes"]}
+    sft_wins = {e["task_seed"]: e["success"] for e in primary["episodes"]}
+    c.equal("matched base 0/30 against SFT 25/30, paired", (sum(base_wins.values()), sum(sft_wins.values()),
+            sum(sft_wins[k] and not base_wins[k] for k in sft_wins)), (0, 25, 25))
     attempt = c.load(f"{BOOK}/base-gate-first-attempt.json")
     c.equal("first attempt was incomplete", (attempt["status"], len(attempt["episodes"])), ("running", 23))
     diagnostic = c.load(f"{BOOK}/development-diagnostic.json")["cells"]
