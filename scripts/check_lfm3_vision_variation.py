@@ -7,18 +7,27 @@ import hashlib
 import json
 from contextlib import closing
 from dataclasses import asdict
+from functools import partial
 from importlib.metadata import version
 from pathlib import Path
 
-from browser_control.lfm3_vision import MODEL_ID, MODEL_REVISION, LFM3VisionPolicy
+from browser_control.lfm3_vision import (
+    MODEL_ID,
+    MODEL_REVISION,
+    LFM3VisionPolicy,
+    adapter_hash,
+    attach_adapter,
+)
 from browser_control.manifest import RunManifest
 from browser_control.miniwob_assets import MiniwobAssetServer, ensure_miniwob_assets
 from browser_control.transformers_policy import DecoderConfig
 from browser_control.vision_browser import VisionBrowserGymEnvironment
 from browser_control.vision_evaluation import (
+    MULTI_STEP_TASKS,
     VISION_TASKS,
     classify_variation_group,
     collect_vision_episode,
+    collect_vision_sequence,
 )
 
 
@@ -29,13 +38,17 @@ def generation_seed(task_seed: int, member: int) -> int:
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument("--task", choices=VISION_TASKS, required=True)
+    parser.add_argument("--task", choices=VISION_TASKS + MULTI_STEP_TASKS, required=True)
+    parser.add_argument("--max-steps", type=int, default=1)
     parser.add_argument("--seeds", type=int, nargs="+", required=True)
     parser.add_argument("--group-size", type=int, default=4)
     parser.add_argument("--top-p", type=float, required=True)
+    parser.add_argument("--adapter", type=Path)
     args = parser.parse_args()
     if args.output.exists():
         parser.error("Preserve earlier evidence")
+    if not 1 <= args.max_steps <= 8 or (args.max_steps == 1 and args.task in MULTI_STEP_TASKS):
+        parser.error("--max-steps must be 1..8, and above 1 for multi-step tasks")
     if (
         len(set(args.seeds)) != len(args.seeds)
         or any(not 100 <= seed < 10000 for seed in args.seeds)
@@ -64,16 +77,18 @@ def main():
                 "model_id": MODEL_ID,
                 "model_revision": MODEL_REVISION,
                 "task": args.task,
+                "adapter_sha256": adapter_hash(args.adapter),
                 "task_seeds": args.seeds,
                 "group_size": args.group_size,
                 "decoder": asdict(decoder),
                 "image_condition": "screenshot",
-                "max_steps": 1,
+                "max_steps": args.max_steps,
                 "max_prompt_tokens": 2048,
                 "enable_thinking": False,
                 "attention": "sdpa",
                 "dtype": "float16",
-                "generation_seed": "1000000 + task_seed * 64 + member * 16",
+                "generation_seed": "1000000 + task_seed * 64 + member * 16"
+                + (" + turn" if args.max_steps > 1 else ""),
             },
         ).to_dict(),
         "groups": [],
@@ -91,6 +106,7 @@ def main():
     save()
     try:
         policy = LFM3VisionPolicy.load(decoder)
+        attach_adapter(policy, args.adapter)
         payload["effective_generation_config"] = (
             policy.model.generation_config.to_dict()
         )
@@ -103,8 +119,13 @@ def main():
                 )
             ) as env:
                 for seed in args.seeds:
+                    collect = (
+                        collect_vision_episode
+                        if args.max_steps == 1
+                        else partial(collect_vision_sequence, max_steps=args.max_steps)
+                    )
                     rows = [
-                        collect_vision_episode(
+                        collect(
                             env,
                             policy,
                             seed,

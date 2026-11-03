@@ -10,6 +10,7 @@ from browser_control.vision_browser import VisionObservation, VisionStep
 from browser_control.vision_evaluation import (
     classify_variation_group,
     collect_vision_episode,
+    episode_outcome,
     policy_observation,
     summarize_vision_episodes,
 )
@@ -201,3 +202,103 @@ def test_requested_rng_and_logprob_recording_reach_the_policy(tmp_path):
     )
     assert Policy.calls == [{"seed": 77, "record_logprobs": True}]
     assert row["generation_seed"] == 77
+
+
+def reserved_protocol():
+    return {
+        "status": "locked",
+        "seeds": [21000, 21001],
+        "policies": {"base": None, "grpo": "a" * 64},
+        "cells": [["sampling", "screenshot"], ["greedy", "screenshot"]],
+    }
+
+
+def test_reserved_request_accepts_only_declared_cells_and_policies():
+    from browser_control.vision_evaluation import check_reserved_request
+
+    protocol = reserved_protocol()
+    check_reserved_request(protocol, [21000, 21001], None, "sampling", "screenshot")
+    check_reserved_request(protocol, [21000, 21001], "a" * 64, "greedy", "screenshot")
+    bad = [
+        ({**protocol, "status": "draft"}, [21000, 21001], None, "sampling", "screenshot"),
+        ({**protocol, "seeds": [60, 61]}, [60, 61], None, "sampling", "screenshot"),
+        ({**protocol, "seeds": [21000, 21000]}, [21000, 21000], None, "sampling", "screenshot"),
+        (protocol, [21001, 21000], None, "sampling", "screenshot"),
+        (protocol, [21000], None, "sampling", "screenshot"),
+        (protocol, [21000, 21001], "b" * 64, "sampling", "screenshot"),
+        (protocol, [21000, 21001], None, "sampling", "white"),
+    ]
+    for args in bad:
+        with pytest.raises(ValueError):
+            check_reserved_request(*args)
+
+
+class SequenceEnvironment(Environment):
+    """Finishes with the given reward after `clicks` steps."""
+
+    def __init__(self, clicks=2, reward=1.0):
+        super().__init__(reward, True)
+        self.clicks = clicks
+
+    def step(self, action):
+        self.actions.append(action)
+        done = len(self.actions) >= self.clicks
+        return VisionStep(self.observation, self.reward if done else 0.0, done, False)
+
+
+class SequencePolicy(Policy):
+    def __init__(self, texts):
+        super().__init__()
+        self.texts = list(texts)
+
+    def generate(self, observation, *, seed):
+        self.calls.append((observation, seed))
+        return replace(self.output, text=self.texts[len(self.calls) - 1])
+
+
+def click(x, y):
+    return f"<tool_call><function=click><parameter=x>{x}</parameter><parameter=y>{y}</parameter></function></tool_call>"
+
+
+def test_sequence_sends_history_and_succeeds_on_the_terminal_reward(tmp_path):
+    from browser_control.vision_evaluation import collect_vision_sequence
+
+    env, policy = SequenceEnvironment(2), SequencePolicy([click(100, 200), click(700, 300)])
+    row = collect_vision_sequence(env, policy, 30, "screenshot", tmp_path, max_steps=4)
+    assert row["success"] and row["environment_steps"] == 2 and row["stop_reason"] == "done"
+    first, second = (call[0] for call in policy.calls)
+    assert first.goal == env.observation.goal
+    assert second.goal.endswith("Earlier clicks (x, y on 0–1000): (100, 200)")
+    assert [call[1] for call in policy.calls] == [480, 481]
+    assert (tmp_path / "seed-30.png").exists() and (tmp_path / "seed-30-g480-turn-1.png").exists()
+    assert summarize_vision_episodes([row])["successes"] == 1
+
+
+def test_sequence_stops_unrepaired_on_an_invalid_call_and_at_the_step_limit(tmp_path):
+    from browser_control.vision_evaluation import collect_vision_sequence
+
+    env = SequenceEnvironment(3)
+    row = collect_vision_sequence(env, SequencePolicy([click(1, 2), "click(5)"]), 30, "screenshot", tmp_path, max_steps=4)
+    assert not row["success"] and row["stop_reason"] == "invalid-call" and len(env.actions) == 1
+    assert not row["valid_action"] and "error" in row["turns"][-1]
+    env = SequenceEnvironment(3)
+    row = collect_vision_sequence(env, SequencePolicy([click(1, 2)] * 2), 30, "screenshot", tmp_path / "b", max_steps=2)
+    assert row["stop_reason"] == "step-limit" and not row["success"] and len(env.actions) == 2
+    assert episode_outcome(row) == "wrong-click"
+
+
+def test_samples_of_one_task_keep_separate_later_screenshots(tmp_path):
+    from browser_control.vision_evaluation import collect_vision_sequence
+
+    class Changing(SequenceEnvironment):
+        def step(self, action):
+            result = super().step(action)
+            self.observation = observation("blue" if len(self.actions) % 2 else "green")
+            return VisionStep(self.observation, result.reward, result.terminated, False)
+
+    for member in range(2):
+        env = Changing(2)
+        texts = [click(100 + member, 200), click(700, 300)]
+        collect_vision_sequence(env, SequencePolicy(texts), 30, "screenshot", tmp_path,
+                                max_steps=4, generation_seed=1000 + member * 16)
+    assert {p.name for p in tmp_path.glob("*turn-1.png")} == {"seed-30-g1000-turn-1.png", "seed-30-g1016-turn-1.png"}
