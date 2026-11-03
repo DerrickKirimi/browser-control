@@ -146,6 +146,12 @@ Without the GPU extras, 22 tests that need PyTorch, TRL, NumPy or Pillow are ski
 On 2–3 November I reran the LFM3 adapter check and the LFM2 commands from a clean copy: both adapters scored 25/30 again, and LFM2 reached
 50/50 again.
 
+**Pinned versions.** The ML stack is pinned to the versions the results were produced with: PyTorch, Transformers, TRL,
+PEFT, Accelerate, Pillow, Playwright and BrowserGym. Some of those pins have published security advisories, mostly for
+Pillow's image decoders and Transformers' loaders. That's acceptable for local research runs on trusted inputs (MiniWoB's
+own pages and Liquid AI's checkpoints), but don't reuse these pins in a service that handles untrusted images or
+model files. Supporting packages without a bearing on the numbers are kept current.
+
 ## Evaluation rules
 
 - **Invalid output stays a failure.** A strict parser rejects malformed calls; nothing repairs them or retries.
