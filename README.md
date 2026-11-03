@@ -350,7 +350,7 @@ model files. Supporting packages without a bearing on the numbers are kept curre
 Liquid AI's cookbook trains LFM2-350M on MiniWoB++ `click-test` with GRPO through TRL and OpenEnv
 ([example](https://github.com/Liquid4All/cookbook/tree/main/examples/browser-control),
 [write-up by Pau Labarta Bajo](https://paulabartabajo.substack.com/p/fine-tuning-lfm2-350m-for-browser)), and names
-`book-flight` and vision models as next steps. This project measures that `click-test` result across seeds and takes both
+`book-flight` and vision models as next steps. This project measures that `click-test` result across seeds and takes both natural
 next steps, with held-out evaluation.
 
 ## Repository guide
