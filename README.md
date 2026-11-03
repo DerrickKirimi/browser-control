@@ -3,7 +3,7 @@
 I train small [Liquid AI](https://huggingface.co/LiquidAI) models, [LFM3-VL-2B](https://huggingface.co/LiquidAI/LFM3-VL-2B),
 [LFM3-1.7B](https://huggingface.co/LiquidAI/LFM3-1.7B) and [LFM2-350M](https://huggingface.co/LiquidAI/LFM2-350M), to operate a
 real browser through [MiniWoB++](https://miniwob.farama.org/) tasks in [BrowserGym](https://github.com/ServiceNow/BrowserGym),
-on a free T4 GPU. Each turn the model sees the page, as a screenshot or as text, and emits one action; the page's own
+on the free T4 GPUs of [Google Colab](https://colab.research.google.com/) and [Kaggle](https://www.kaggle.com/). Each turn the model sees the page, as a screenshot or as text, and emits one action; the page's own
 reward decides success.
 
 - **From pixels alone**, a [LoRA-tuned LFM3-VL-2B](https://huggingface.co/Aptheos/lfm3-vl-2b-click-sequence-sft) clicks through a two-button sequence on **95 of 100** held-out tasks
@@ -133,7 +133,7 @@ judgement to pick the right flight.
 | LFM3-1.7B | [`book-flight`](https://miniwob.farama.org/environments/book-flight/), GRPO on top of SFT | Native reward | No detectable effect, and too little variation to continue |
 | LFM2-350M | [`click-test`](https://miniwob.farama.org/environments/click-test/), one fixed prompt | GRPO, 3 seeds | 2/50 → 50/50 for each seed |
 
-All of it fits a free T4. The LFM3 reserved evaluation took about 1.6 hours for 200 episodes, including setup. Every
+All of it fits a free Colab or Kaggle T4. The LFM3 reserved evaluation took about 1.6 hours for 200 episodes, including setup. Every
 "unseen tasks" number comes from a reserved seed range evaluated once, after the protocol, policy and decoder were locked.
 
 ### LFM3-VL-2B: clicking a sequence from pixels
