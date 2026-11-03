@@ -12,69 +12,6 @@ reward decides success.
   base model solves none in this format.
 - **With reinforcement learning only**, [LFM2-350M](https://huggingface.co/Aptheos/lfm2-350m-click-test-grpo) goes from 2/50 to 50/50 on its first browser task.
 
-## What the model sees and writes
-
-[MiniWoB++](https://miniwob.farama.org/) is a set of more than a hundred small web pages, each with an instruction and its
-own scorer: "click the button", "book the shortest flight", "click the cyan box". A task is generated from a seed, so
-seed 10100 always produces the same airports, dates and flights, and the page itself reports success with a reward of
-1. [BrowserGym](https://github.com/ServiceNow/BrowserGym) runs these pages in a real browser and turns each one into a
-turn-by-turn exchange with a model.
-
-The model never touches the browser directly. Each turn it receives the instruction and a description of the page, and
-it must answer with exactly one action. A strict parser reads that action, and anything else, an explanation, two
-actions, a malformed call, ends the episode with reward 0. Nothing is repaired or retried.
-
-**What it sees.** For the text models, the page arrives as an accessibility tree: the page's elements, one per line, each
-interactive one with an id. This is the whole page for [`click-test`](https://miniwob.farama.org/environments/click-test/):
-
-```text
-Goal: Click the button.
-RootWebArea 'Click Test Task', focused
-	[13] button 'Click Me!'
-```
-
-and this is the start of a [`book-flight`](https://miniwob.farama.org/environments/book-flight/) page:
-
-```text
-Goal: Book the shortest one-way flight from: HOT to: PIE on 10/24/2016.
-	[17] heading 'Book Your One-Way Flight'
-	[19] textbox 'From:'
-	[21] textbox 'To:'
-	StaticText 'Departure Date'
-	[25] textbox ''
-	[27] button 'Search'
-```
-
-The vision model gets none of that: only a screenshot and the instruction, and it answers with a click position from 0
-to 1000 on each axis.
-
-**What it writes.** On `click-test` the whole correct answer is `click('13')`. On `book-flight`, LFM3 answers in its own
-tool-calling format, one call per turn, and needs about ten turns: type the origin, pick it from the autocomplete list,
-do the same for the destination, open the date picker, page to the right month, pick the day, search, then compare the
-flights and book the right one. The first turn of the episode above is:
-
-```text
-<tool_call>
-<function=fill>
-<parameter=bid>
-19
-</parameter>
-<parameter=value>
-HOT
-</parameter>
-</function>
-</tool_call>
-```
-
-**Why `click-test` matters even though it's trivial.** The prompt describes the action format and even gives
-`click('13')` as its example, so the task tests one thing: whether the model will answer in the required form at all.
-Base LFM2-350M mostly didn't. It wrote near misses such as `click('Click Test Task')`, with the page's title where the id
-belongs, or `click(<button id="13">Click Me!</button>)`, with the button's HTML inside the call, and succeeded 2 times in
-50. After GRPO, trained only on that reward, it wrote `click('13')` 50 times in 50, for each of three training seeds.
-That's the first hurdle for any small model acting through tools: no task can be solved before the output is something
-the environment can execute. `book-flight` then asks for the same discipline across ten dependent steps, plus the
-judgement to pick the right flight.
-
 ## How it works
 
 <p align="center">
@@ -110,6 +47,79 @@ actions the model recorded during evaluation redraws exactly what it did; a repl
 reward fails. `scripts/render_episode_replay.py` makes them from the evaluation reports. You can step through more
 episodes, including failures, and watch a narrated two-minute tour in the
 [Space](https://huggingface.co/spaces/Aptheos/browser-control-demo).
+
+## What the model sees and writes
+
+[MiniWoB++](https://miniwob.farama.org/) is a set of more than a hundred small web pages, each with an instruction and its
+own scorer: "click the button", "book the shortest flight", "click the cyan box". A task is generated from a seed, so
+seed 10100 always produces the same airports, dates and flights, and the page itself reports success with a reward of
+1. [BrowserGym](https://github.com/ServiceNow/BrowserGym) runs these pages in a real browser and turns each one into a
+turn-by-turn exchange with a model.
+
+The model never touches the browser directly. Each turn it receives the instruction and a description of the page, and
+it must answer with exactly one action. A strict parser reads that action, and anything else, an explanation, two
+actions, a malformed call, ends the episode with reward 0. Nothing is repaired or retried.
+
+**What it sees.** For the text models, the page arrives as an accessibility tree: the page's elements, one per line, each
+interactive one with an id. On the left is the page as a person sees it; on the right, the whole of what the text model
+receives.
+
+<table>
+<tr><th><a href="https://miniwob.farama.org/environments/click-test/"><code>click-test</code></a>: the page</th><th>What the model receives</th></tr>
+<tr><td><img src="docs/media/page-click-test.png" width="200" alt="The click-test page: one button labelled Click Me!"></td>
+<td><pre>Goal: Click the button.
+RootWebArea 'Click Test Task', focused
+	[13] button 'Click Me!'</pre></td></tr>
+<tr><th><a href="https://miniwob.farama.org/environments/book-flight/"><code>book-flight</code></a>: the page</th><th>What the model receives (first lines)</th></tr>
+<tr><td><img src="docs/media/page-book-flight.png" width="200" alt="The book-flight form: From, To, Departure Date and Search"></td>
+<td><pre>Goal: Book the shortest one-way flight from: HOT to: PIE on 10/24/2016.
+	[17] heading 'Book Your One-Way Flight'
+	[19] textbox 'From:'
+	[21] textbox 'To:'
+	StaticText 'Departure Date'
+	[25] textbox ''
+	[27] button 'Search'</pre></td></tr>
+</table>
+
+The vision model gets none of that: only the screenshot and the instruction. It answers with a click position from 0 to
+1000 on each axis, measured across the whole screenshot, as below. Its first click on reserved task 21001 lands on the
+visible part of ONE.
+
+<p align="center">
+  <img src="docs/media/vision-coordinates.png" width="520"
+       alt="The click-button-sequence screenshot with a 0 to 1000 grid and the model's first click at x=307, y=757 on button ONE">
+</p>
+
+**What it writes.** On `click-test` the whole correct answer is `click('13')`. On `book-flight`, LFM3 answers in its own
+tool-calling format, one call per turn, and needs about ten turns: type the origin, pick it from the autocomplete list,
+do the same for the destination, open the date picker, page to the right month, pick the day, search, then compare the
+flights and book the right one. The first turn of the episode above, and what it does to the page:
+
+<table>
+<tr><th>The model's first answer</th><th>The page afterwards</th></tr>
+<tr><td><pre>&lt;tool_call&gt;
+&lt;function=fill&gt;
+&lt;parameter=bid&gt;
+19
+&lt;/parameter&gt;
+&lt;parameter=value&gt;
+HOT
+&lt;/parameter&gt;
+&lt;/function&gt;
+&lt;/tool_call&gt;</pre>
+It fills element 19, the <code>From:</code> box, with <code>HOT</code>; the page opens its autocomplete list, and the next
+turn picks the airport from it.</td>
+<td><img src="docs/media/book-flight-after-first-call.png" width="260" alt="The From box filled with HOT and its autocomplete list open"></td></tr>
+</table>
+
+**Why `click-test` matters even though it's trivial.** The prompt describes the action format and even gives
+`click('13')` as its example, so the task tests one thing: whether the model will answer in the required form at all.
+Base LFM2-350M mostly didn't. It wrote near misses such as `click('Click Test Task')`, with the page's title where the id
+belongs, or `click(<button id="13">Click Me!</button>)`, with the button's HTML inside the call, and succeeded 2 times in
+50. After GRPO, trained only on that reward, it wrote `click('13')` 50 times in 50, for each of three training seeds.
+That's the first hurdle for any small model acting through tools: no task can be solved before the output is something
+the environment can execute. `book-flight` then asks for the same discipline across ten dependent steps, plus the
+judgement to pick the right flight.
 
 ## Results
 
