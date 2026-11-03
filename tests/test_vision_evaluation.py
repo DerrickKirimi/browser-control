@@ -302,3 +302,12 @@ def test_samples_of_one_task_keep_separate_later_screenshots(tmp_path):
         collect_vision_sequence(env, SequencePolicy(texts), 30, "screenshot", tmp_path,
                                 max_steps=4, generation_seed=1000 + member * 16)
     assert {p.name for p in tmp_path.glob("*turn-1.png")} == {"seed-30-g1000-turn-1.png", "seed-30-g1016-turn-1.png"}
+
+
+def test_second_reserved_range_needs_its_own_locked_protocol():
+    from browser_control.vision_evaluation import check_reserved_request
+
+    protocol = {**reserved_protocol(), "seeds": [22000, 22001]}
+    check_reserved_request(protocol, [22000, 22001], None, "sampling", "screenshot")
+    with pytest.raises(ValueError):
+        check_reserved_request({**protocol, "seeds": [22000, 23000]}, [22000, 23000], None, "sampling", "screenshot")

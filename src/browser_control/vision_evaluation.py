@@ -289,7 +289,9 @@ def summarize_vision_episodes(episodes):
     }
 
 
-RESERVED_SEEDS = tuple(range(21000, 21100))
+# Held-out ranges, each opened only by a locked protocol: the first for the one-click and sequence SFT
+# evaluations, the second for comparing sequence policies after the first range was spent.
+RESERVED_SEEDS = tuple(range(21000, 21100)) + tuple(range(22000, 22100))
 
 
 def check_reserved_request(protocol, seeds, adapter_sha256, decoder, image_condition):
