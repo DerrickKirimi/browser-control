@@ -59,27 +59,32 @@ def task_box(page):
     return (0, top, right, bottom)
 
 
-def annotate(png: bytes, goal: str, caption: str, status: str):
+def annotate(png: bytes, goal: str, caption: str, status: str, upscale: int = SCALE):
+    """Crop to the task, enlarge by `upscale` (1 for screenshots already taken at high density),
+    and add a caption panel sized to the frame."""
     from PIL import Image, ImageDraw, ImageFont
 
     page = Image.open(io.BytesIO(png)).convert("RGB")
     page = page.crop(task_box(page))
-    page = page.resize((page.width * SCALE, page.height * SCALE), Image.NEAREST)
-    frame = Image.new("RGB", (page.width, page.height + PANEL), (17, 17, 23))
+    if upscale != 1:
+        page = page.resize((page.width * upscale, page.height * upscale), Image.NEAREST)
+    unit = page.width / 480
+    panel = round(PANEL * unit)
+    frame = Image.new("RGB", (page.width, page.height + panel), (17, 17, 23))
     frame.paste(page, (0, 0))
     draw = ImageDraw.Draw(frame)
     try:
-        font = ImageFont.truetype("DejaVuSans.ttf", 18)
-        small = ImageFont.truetype("DejaVuSans.ttf", 15)
+        font = ImageFont.truetype("DejaVuSans.ttf", round(18 * unit))
+        small = ImageFont.truetype("DejaVuSans.ttf", round(15 * unit))
     except OSError:
         font = small = ImageFont.load_default()
-    width = max(20, page.width // 10)
-    y = page.height + 10
-    for line in textwrap.wrap(goal, width + 12)[:2]:
-        draw.text((14, y), line, fill=(170, 170, 185), font=small)
-        y += 20
-    for line in textwrap.wrap(caption, width)[:2]:
-        draw.text((14, y + 4), line, fill=(255, 255, 255), font=font)
-        y += 24
-    draw.text((14, page.height + PANEL - 26), status, fill=(120, 220, 140), font=small)
+    margin, chars = round(14 * unit), 48
+    y = page.height + round(10 * unit)
+    for line in textwrap.wrap(goal, chars + 12)[:2]:
+        draw.text((margin, y), line, fill=(170, 170, 185), font=small)
+        y += round(20 * unit)
+    for line in textwrap.wrap(caption, chars)[:2]:
+        draw.text((margin, y + round(4 * unit)), line, fill=(255, 255, 255), font=font)
+        y += round(24 * unit)
+    draw.text((margin, page.height + panel - round(26 * unit)), status, fill=(120, 220, 140), font=small)
     return frame

@@ -1,13 +1,16 @@
 # Browser control with small Liquid models
 
-I train small [Liquid AI](https://huggingface.co/LiquidAI) models to operate a real browser through MiniWoB tasks in
-BrowserGym, on a free T4 GPU. The policy reads the page and emits one tool call per turn, and the browser environment's
+I train small [Liquid AI](https://huggingface.co/LiquidAI) models, [LFM3-1.7B](https://huggingface.co/LiquidAI/LFM3-1.7B),
+[LFM2-350M](https://huggingface.co/LiquidAI/LFM2-350M) and, as a baseline so far, [LFM3-VL-2B](https://huggingface.co/LiquidAI/LFM3-VL-2B),
+to operate a real browser through [MiniWoB++](https://miniwob.farama.org/) tasks in
+[BrowserGym](https://github.com/ServiceNow/BrowserGym), on a free T4 GPU. The policy reads the page and emits one tool call per turn, and the browser environment's
 own reward decides success.
 
 ## How it works
 
 Each turn the policy reads the page's accessibility tree and writes one tool call, such as `fill` a field or `click` an
-element by its id. BrowserGym executes it in a real Chromium page, and MiniWoB's own reward says whether the task
+element by its id. [BrowserGym](https://github.com/ServiceNow/BrowserGym) executes it in a real [Chromium](https://www.chromium.org/)
+page, and [MiniWoB++](https://miniwob.farama.org/)'s own reward says whether the task
 succeeded. No judge model is involved.
 
 <p align="center">
@@ -15,8 +18,8 @@ succeeded. No judge model is involved.
        alt="LFM3-1.7B with the SFT adapter booking the shortest flight from HOT to PIE in ten steps">
 </p>
 
-Above, the SFT adapter books the shortest flight on reserved task 10100: two autocompletes, a date picker, a search,
-then the shortest of three flights. Below, LFM2-350M on `click-test`, before and after GRPO: the base model writes
+Above, the SFT adapter books the shortest flight on [reserved task 10100](https://aptheos-browser-control-demo.static.hf.space/index.html#task=10100): two autocompletes, a date picker, a search,
+then the shortest of three flights. Below, LFM2-350M on [`click-test`](https://miniwob.farama.org/environments/click-test/), before and after GRPO: the base model writes
 text that isn't an action; the trained one writes `click('13')`.
 
 | Base LFM2-350M | After GRPO |
@@ -33,15 +36,15 @@ episodes, including failures, and watch a narrated two-minute tour in the
 
 | Model | Task | Method | Result |
 | --- | --- | --- | --- |
-| LFM3-1.7B | `book-flight`, multi-step, unseen tasks | Base model | 0/100 |
-| LFM3-1.7B | `book-flight`, multi-step, unseen tasks | Supervised fine-tuning (SFT) on scripted expert traces | **160/200, 80.0%** (95% CI 73.9–85.0%) |
-| LFM3-1.7B | `book-flight`, GRPO on top of SFT | Native reward | No detectable effect, and too little variation to continue |
-| LFM3-VL-2B | `click-color`, from screenshots | Base model, no training | 17/30 greedy, 15/30 sampled; 0/30 on a white image |
-| LFM2-350M | `click-test`, one fixed prompt | GRPO, 3 seeds | 2/50 → 50/50 for each seed |
+| LFM3-1.7B | [`book-flight`](https://miniwob.farama.org/environments/book-flight/), multi-step, unseen tasks | Base model | 0/100 |
+| LFM3-1.7B | [`book-flight`](https://miniwob.farama.org/environments/book-flight/), multi-step, unseen tasks | Supervised fine-tuning (SFT) on scripted expert traces | **160/200, 80.0%** (95% CI 73.9–85.0%) |
+| LFM3-1.7B | [`book-flight`](https://miniwob.farama.org/environments/book-flight/), GRPO on top of SFT | Native reward | No detectable effect, and too little variation to continue |
+| LFM3-VL-2B | [`click-color`](https://miniwob.farama.org/environments/click-color/), from screenshots | Base model, no training | 17/30 greedy, 15/30 sampled; 0/30 on a white image |
+| LFM2-350M | [`click-test`](https://miniwob.farama.org/environments/click-test/), one fixed prompt | GRPO, 3 seeds | 2/50 → 50/50 for each seed |
 
 All of it fits a free T4. The LFM3 reserved evaluation took about 1.6 hours for 200 episodes, including setup.
 
-### LFM3-1.7B on `book-flight`
+### LFM3-1.7B on [`book-flight`](https://miniwob.farama.org/environments/book-flight/)
 
 The agent has to fill in origin and destination through autocomplete, work a read-only date picker, search, and book
 the cheapest or shortest of the flights shown, on the `book-flight-nodelay` variant. The base model failed all 100
@@ -81,7 +84,7 @@ parser rejects without repair. A later variation check found real differences be
 though only 5 of 48 samples were valid clicks in the wrong place, so reward here would teach format as well as vision.
 See the [vision baseline](docs/results/lfm3-vision-baseline.md). Vision training is the next stage of this project.
 
-### LFM2-350M on `click-test`
+### LFM2-350M on [`click-test`](https://miniwob.farama.org/environments/click-test/)
 
 This is the easy one, and its limit matters: `click-test` has a single fixed prompt, and a formatting curriculum was
 active while the model first learned. It shows reproducible alignment to a strict action format, not generalization.
@@ -123,7 +126,7 @@ Without the GPU extras, 22 tests that need PyTorch, TRL, NumPy or Pillow are ski
 On 2–3 November I reran the LFM3 adapter check and the LFM2 commands from a clean copy: both adapters scored 25/30 again, and LFM2 reached
 50/50 again.
 
-## What makes the numbers trustworthy
+## Evaluation rules
 
 - **Invalid output stays a failure.** A strict parser rejects malformed calls; nothing repairs them or retries.
 - **Native reward only.** Success is the environment's terminal reward, with no shaping or oracle in evaluation.
