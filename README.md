@@ -6,8 +6,9 @@ real browser through [MiniWoB++](https://miniwob.farama.org/) tasks in [BrowserG
 on the free T4 GPUs of [Google Colab](https://colab.research.google.com/) and [Kaggle](https://www.kaggle.com/). Each turn the model sees the page, as a screenshot or as text, and emits one action; the page's own
 reward decides success.
 
-- **From pixels alone**, a [LoRA-tuned LFM3-VL-2B](https://huggingface.co/Aptheos/lfm3-vl-2b-click-sequence-sft) clicks through a two-button sequence on **95 of 100** held-out tasks
-  (greedy); the base model solves none.
+- **From pixels alone**, [LFM3-VL-2B tuned with SFT, then GRPO](https://huggingface.co/Aptheos/lfm3-vl-2b-click-sequence-sft)
+  clicks through a two-button sequence on **92 of 100** held-out tasks greedy and **83 of 100** sampled at temperature 1;
+  the base model solves none. GRPO alone took sampled success from 26 to 83.
 - **From the page's text**, a [LoRA-tuned LFM3-1.7B](https://huggingface.co/Aptheos/lfm3-1.7b-book-flight-sft) books the right flight on **160 of 200** held-out ten-step tasks; the
   base model solves none in this format.
 - **With reinforcement learning only**, [LFM2-350M](https://huggingface.co/Aptheos/lfm2-350m-click-test-grpo) goes from 2/50 to 50/50 on its first browser task.
@@ -127,6 +128,7 @@ judgement to pick the right flight.
 | --- | --- | --- | --- |
 | LFM3-VL-2B | [`click-button-sequence`](https://miniwob.farama.org/environments/click-button-sequence/), screenshots only, unseen tasks | Base model | 0/100 |
 | LFM3-VL-2B | [`click-button-sequence`](https://miniwob.farama.org/environments/click-button-sequence/), screenshots only, unseen tasks | SFT on 234 expert clicks | **95/100 greedy** (95% CI 89–98%); 21/100 sampled at temperature 1 |
+| LFM3-VL-2B | [`click-button-sequence`](https://miniwob.farama.org/environments/click-button-sequence/), fresh unseen tasks | SFT, then GRPO on native reward | **92/100 greedy**, **83/100 sampled** (SFT on the same tasks: 91 and 26) |
 | LFM3-VL-2B | [`click-color`](https://miniwob.farama.org/environments/click-color/), screenshots only, unseen tasks | Base, then SFT | 30/100 → 100/100 sampled, mostly a format fix (see below) |
 | LFM3-1.7B | [`book-flight`](https://miniwob.farama.org/environments/book-flight/), multi-step, unseen tasks | Base model, one call per turn, thinking off, 128 tokens | 0/100 |
 | LFM3-1.7B | [`book-flight`](https://miniwob.farama.org/environments/book-flight/), multi-step, unseen tasks | Supervised fine-tuning (SFT) on scripted expert traces | **160/200, 80.0%** (95% CI 73.9–85.0%) |
@@ -149,10 +151,35 @@ succeeded on **95 with greedy decoding** and **21 when sampling at temperature 1
 21 wins against the base model and no losses (exact sign test, p ≈ 1e-6). With a white image in place of the screenshot
 it solved none, so the clicks depend on the pixels.
 
+<p align="center">
+  <img src="docs/media/compare-sequence-base-vs-sft-21001.gif" width="560"
+       alt="Held-out task 21001, greedy: the base model's first answer is not a valid click; the SFT adapter clicks ONE then TWO">
+</p>
+
+**Then GRPO, to fix sampling.** Sampling was the weak spot: 78 of the 100 sampled episodes ended on a malformed call,
+while episodes where every call was valid succeeded 95% of the time. The visual decision was learned; staying in format at
+temperature 1 wasn't. Unlike the book-flight adapter, sampled episodes now varied in reward, which is what GRPO needs.
+
+I used a simplified GRPO over whole episodes. For each of the same 120 training tasks it samples 4 episodes, scores each
+only by the page's reward, and weights every turn of an episode by that episode's reward minus its group's mean. That's
+one on-policy update per group, with no clipping, KL penalty or standard-deviation scaling. Then a second locked
+evaluation on 100 fresh tasks (seeds 22000–22099), against the SFT adapter:
+
+| Policy | Sampled (locked test) | Every call valid, sampled | Greedy | White image |
+| --- | --- | --- | --- | --- |
+| SFT | 26/100 | 30 | 91/100 | 0/100 |
+| **SFT, then GRPO** | **83/100** (95% CI 75–89%) | **94** | **92/100** | 0/100 |
+
+GRPO won 57 tasks and lost none under sampling (exact sign test, p ≈ 1e-17), cost nothing on greedy, and still solves
+nothing without the pixels. Success among fully valid episodes stayed at 87–88%, so what it learned is to stay in format.
+
+<p align="center">
+  <img src="docs/media/compare-sequence-sft-vs-grpo-22001.gif" width="560"
+       alt="Held-out task 22001, sampled: the SFT adapter's answer is not a valid action; after GRPO it clicks ONE then TWO">
+</p>
+
 **What this does and doesn't show.** It's one MiniWoB task family with at most four clicks, not general computer use.
-Sampling is the weak spot: 78 of the 100 sampled episodes ended on a malformed call, while episodes where every call was
-valid succeeded 95% of the time. So the visual decision is learned, and staying in format at temperature 1 isn't yet.
-That's a natural target for reinforcement learning, because sampled episodes now vary in reward.
+Both comparisons above are replays of the recorded held-out episodes, the same ones the numbers count.
 
 **One click first.** Before the sequence, I trained a one-click adapter on
 [`click-color`](https://miniwob.farama.org/environments/click-color/) ("click the cyan box"). On 100 reserved tasks it
@@ -230,7 +257,7 @@ See the [three-seed report](docs/results/phase5-three-seed-reproducibility.md).
 
 | Repository | Contents |
 | --- | --- |
-| [`Aptheos/lfm3-vl-2b-click-sequence-sft`](https://huggingface.co/Aptheos/lfm3-vl-2b-click-sequence-sft) | The click-sequence adapter (95/100 greedy), and the one-click `click-color` adapter it started from |
+| [`Aptheos/lfm3-vl-2b-click-sequence-sft`](https://huggingface.co/Aptheos/lfm3-vl-2b-click-sequence-sft) | The click-sequence SFT adapter, the SFT-then-GRPO adapter (`sft-then-grpo/`, 83/100 sampled), and the one-click `click-color` adapter they started from |
 | [`Aptheos/lfm3-1.7b-book-flight-sft`](https://huggingface.co/Aptheos/lfm3-1.7b-book-flight-sft) | The 160/200 adapter, and a second-seed replica for corroboration |
 | [`Aptheos/lfm2-350m-click-test-grpo`](https://huggingface.co/Aptheos/lfm2-350m-click-test-grpo) | Three GRPO adapters, seeds 23, 47 and 71 |
 | [`Aptheos/lfm-browser-control-evidence`](https://huggingface.co/datasets/Aptheos/lfm-browser-control-evidence) | Raw reports with every episode, the expert corpus and screenshots |

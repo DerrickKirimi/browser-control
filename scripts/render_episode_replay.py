@@ -27,11 +27,19 @@ def sharp(env, scale: float) -> bytes:
     if scale <= 1:
         return env.image_png
     page = env._environment.unwrapped.page
+    before = page.evaluate("[window.innerWidth, window.innerHeight, window.devicePixelRatio, scrollX, scrollY]")
     page._bgym_scale_factor = scale
     try:
         pixels = extract_screenshot(page)
     finally:
         page._bgym_scale_factor = 1.0
+        # BrowserGym restores metrics with an explicit override; clear it so the page is exactly as before,
+        # which coordinate clicks depend on.
+        session = page.context.new_cdp_session(page)
+        session.send("Emulation.clearDeviceMetricsOverride")
+        session.detach()
+    if page.evaluate("[window.innerWidth, window.innerHeight, window.devicePixelRatio, scrollX, scrollY]") != before:
+        raise RuntimeError("Sharp capture changed the page's metrics")
     output = io.BytesIO()
     Image.fromarray(pixels).save(output, format="PNG")
     return output.getvalue()
@@ -71,6 +79,84 @@ def replay(env, episode: dict, directory: Path, upscale: int = 1, scale: float =
     return summary
 
 
+def marked(png: bytes, action: str | None, scale: float, factor: float = 1.0) -> bytes:
+    """Draw a ring where a recorded mouse_click(x, y) lands.
+
+    Actions are in screenshot pixels; `factor` converts them to the capture's pixels.
+    """
+    import io
+    import re
+
+    from PIL import Image, ImageDraw
+
+    match = re.fullmatch(r"mouse_click\(([\d.]+), ([\d.]+)\)", action or "")
+    if match is None:
+        return png
+    image = Image.open(io.BytesIO(png)).convert("RGB")
+    x, y = float(match[1]) * factor, float(match[2]) * factor
+    r, w = 7 * max(scale, 1), max(2, round(1.5 * max(scale, 1)))
+    draw = ImageDraw.Draw(image)
+    draw.ellipse((x - r, y - r, x + r, y + r), outline=(230, 30, 30), width=w)
+    draw.line((x - 2 * r, y, x + 2 * r, y), fill=(230, 30, 30), width=max(1, w // 2))
+    draw.line((x, y - 2 * r, x, y + 2 * r), fill=(230, 30, 30), width=max(1, w // 2))
+    output = io.BytesIO()
+    image.save(output, format="PNG")
+    return output.getvalue()
+
+
+def replay_vision(env, episode: dict, directory: Path, scale: float) -> dict:
+    """Replay a screenshot policy's recorded clicks; each frame shows where the next click lands.
+
+    Capturing can disturb a page that is then clicked by coordinates, so the outcome is checked on a
+    replay with no capture, and every frame comes from a fresh reset plus the clicks before it.
+    """
+    directory.mkdir(parents=True, exist_ok=True)
+    seed, goal = episode["task_seed"], episode["goal"]
+    turns = episode.get("turns") or [episode]
+    actions = [t.get("action") if t.get("valid_action") else None for t in turns]
+
+    def play(count):
+        env.reset(seed=seed)
+        reward, done = 0.0, False
+        for action in actions[:count]:
+            if action is None or done:
+                break
+            result = env.step(action)
+            reward, done = result.reward, result.done
+        return reward, done
+
+    reward, done = play(len(actions))
+    # Recorded clicks are in the policy's screenshot pixels; frames are captured at `scale` x CSS pixels.
+    viewport = env._environment.unwrapped.page.viewport_size
+    factor = (scale if scale > 1 else 1) * viewport["width"] / env.image_size[0]
+    frames = []
+    for number, (turn, action) in enumerate(zip(turns, actions), start=1):
+        play(number - 1)
+        coords = turn.get("normalized_coordinates")
+        caption = (f"Click {number}: x={coords['x']}, y={coords['y']} (of 1000)" if action
+                   else f"Click {number}: not a valid action")
+        frames.append(annotate(marked(sharp(env, scale), action, scale, factor), goal, caption,
+                               f"seed {seed}  ·  screenshot only", 1))
+        if action is None:
+            break
+    play(len(actions))
+    outcome = "success" if done and reward > 0 else "failure"
+    frames.append(annotate(sharp(env, scale), goal, f"Result: {outcome}", f"seed {seed}  ·  reward {reward:g}", 1))
+    for index, frame in enumerate(frames):
+        frame.save(directory / f"frame-{index:02d}.png")
+    from PIL import Image
+
+    durations = [1500] * (len(frames) - 1) + [2600]
+    palette = [f.quantize(colors=256, method=Image.Quantize.MEDIANCUT, dither=Image.Dither.NONE) for f in frames]
+    palette[0].save(directory / "episode.gif", save_all=True, append_images=palette[1:],
+                    duration=durations, loop=0, optimize=True)
+    summary = {"task_seed": seed, "goal": goal, "recorded_success": bool(episode.get("success")),
+               "replayed_reward": reward, "matches": (done and reward > 0) == bool(episode.get("success")),
+               "actions": actions}
+    (directory / "timeline.json").write_text(json.dumps(summary, indent=2) + "\n")
+    return summary
+
+
 def single_step(episode: dict) -> dict:
     """Adapt a one-action click-test record to the multi-step episode shape."""
     return {
@@ -103,21 +189,26 @@ def main():
         default="episodes",
         help="Dotted path to the episode list, e.g. trained_evaluation.stochastic.evaluation.episodes",
     )
+    parser.add_argument("--vision", action="store_true", help="Screenshot-policy report with coordinate clicks")
     args = parser.parse_args()
     data = json.loads(args.report.read_text())
     for key in args.episodes_key.split("."):
-        data = data[key]
-    episodes = [single_step(e) if "steps" not in e else e for e in data]
+        data = data[int(key)] if key.isdigit() else data[key]
+    episodes = data if args.vision else [single_step(e) if "steps" not in e else e for e in data]
     if args.seeds:
         episodes = [e for e in episodes if e["task_seed"] in set(args.seeds)]
     root = ensure_miniwob_assets("artifacts/miniwob-plusplus")
     results = []
     with MiniwobAssetServer(root) as server, closing(
-        _ScreenshotCapture.miniwob(args.task, miniwob_url=server.base_url)
+        _ScreenshotCapture.miniwob(args.task, miniwob_url=server.base_url, coordinate_actions=args.vision)
     ) as env:
         for episode in episodes:
-            upscale = 2 if args.device_scale <= 1 else 1
-            summary = replay(env, episode, args.output / f"seed-{episode['task_seed']}", upscale, args.device_scale)
+            directory = args.output / f"seed-{episode['task_seed']}"
+            if args.vision:
+                summary = replay_vision(env, episode, directory, args.device_scale)
+            else:
+                upscale = 2 if args.device_scale <= 1 else 1
+                summary = replay(env, episode, directory, upscale, args.device_scale)
             results.append({k: summary[k] for k in ("task_seed", "recorded_success", "replayed_reward", "matches")})
             print(json.dumps(results[-1]))
     (args.output / "index.json").write_text(json.dumps(results, indent=2) + "\n")

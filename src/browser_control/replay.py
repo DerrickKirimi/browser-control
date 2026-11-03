@@ -88,3 +88,39 @@ def annotate(png: bytes, goal: str, caption: str, status: str, upscale: int = SC
         y += round(24 * unit)
     draw.text((margin, page.height + panel - round(26 * unit)), status, fill=(120, 220, 140), font=small)
     return frame
+
+
+def side_by_side_frames(columns, labels, outcomes, title=""):
+    """Frame-by-frame composite of several replays of one task, with a labelled header per column.
+
+    Shorter columns hold their last frame. The header shows each policy's recorded outcome.
+    """
+    from PIL import Image, ImageDraw, ImageFont
+
+    if not columns or any(not frames for frames in columns) or not len(columns) == len(labels) == len(outcomes):
+        raise ValueError("One nonempty frame list, label and outcome per column")
+    width = max(f.width for frames in columns for f in frames)
+    height = max(f.height for frames in columns for f in frames)
+    unit = width / 480
+    gap, header = round(16 * unit), round((74 if title else 50) * unit)
+    try:
+        bold = ImageFont.truetype("DejaVuSans-Bold.ttf", round(19 * unit))
+        small = ImageFont.truetype("DejaVuSans.ttf", round(15 * unit))
+    except OSError:
+        bold = small = ImageFont.load_default()
+    composites = []
+    for index in range(max(len(frames) for frames in columns)):
+        canvas = Image.new("RGB", (len(columns) * width + (len(columns) + 1) * gap, header + height + gap), (245, 246, 250))
+        draw = ImageDraw.Draw(canvas)
+        if title:
+            draw.text((gap, round(8 * unit)), title, fill=(60, 64, 80), font=small)
+        for column, (frames, label, success) in enumerate(zip(columns, labels, outcomes)):
+            frame = frames[min(index, len(frames) - 1)]
+            x = gap + column * (width + gap)
+            done = index >= len(frames) - 1
+            tag = ("  ✓ success" if success else "  ✗ failure") if done else ""
+            draw.text((x, header - round(32 * unit)), label + tag, font=bold,
+                      fill=(20, 120, 60) if done and success else (170, 40, 40) if done else (25, 27, 38))
+            canvas.paste(frame, (x, header))
+        composites.append(canvas)
+    return composites

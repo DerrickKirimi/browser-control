@@ -34,6 +34,8 @@ the `release-check` reruns don't. The reruns used the clean copy of this reposit
 | Vision matrix | `vision/frozen-matrix/<cell>/report.json` | `conditions[].episodes[]`; screenshots beside each report |
 | Vision variation | `vision/variation/top-p-095/report.json`, `top-p-100/report.json` | `groups[].episodes[]`, with raw log-probabilities |
 | Click-sequence reserved 95/100 greedy, 21/100 sampled, base 0 | `vision/click-sequence-reserved/reserved/<policy>-<cell>/report.json` | `conditions[0].episodes[]` over seeds 21000–21099; each report records the hash of `reserved-protocol.json` |
+| SFT then GRPO, reserved 83/100 sampled and 92/100 greedy, against SFT 26 and 91 | `vision/click-sequence-reserved-b/reserved/<policy>-<cell>/report.json` | Seeds 22000–22099, a second locked protocol in `reserved-protocol.json` |
+| GRPO training and development 37/40 | `vision/click-sequence-grpo/grpo/training.json`, `eval/` | Rewards, advantages and gradient norm for each of 120 groups; 39 varied |
 | Click-sequence development 11/40 and 37/40 | `vision/click-sequence-fit/eval/` | Seeds 60–99; base and click-color SFT in `vision/click-sequence-baseline/eval/` |
 | Click-sequence training | `vision/click-sequence-fit/experts/experts.json`, `sft/training.json` | 234 examples, 3 excluded layouts, 117 updates from the click-color adapter |
 | Click-color reserved 30 → 100, GRPO white-image flag | `vision/click-color-reserved/reserved/` | Seeds 21000–21099; protocol hash in each report |

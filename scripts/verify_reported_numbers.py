@@ -32,7 +32,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from browser_control.book_flight_diagnostic import summarize_rollouts  # noqa: E402
 
-BUNDLE_SHA256 = "a8333c43823501830e907e6b287d84d2858fa2bf7fb8b536b5f1061709d2c89c"
+BUNDLE_SHA256 = "9530b2ae78cda74463895e0bb048a40eb1f4143261ad1dc93cadd678eb715c7e"
 Z = 1.959963984540054
 PRIMARY_SFT = "53f80cc120b5b096f4c1d7d3d7490f13ff6c00e2f2877213b213e54e35791135"
 REPLICA_SFT = "9840e091b5b9549d89de3a0281c7351c9d498aab0352639fbc316ac8855d0aa1"
@@ -55,6 +55,12 @@ BOOK = "lfm3-book-flight"
 VISION_SFT = "1969938677a35eb4841677b0c2d200109903dc696f77c474626deebbfe324c1c"
 VISION_GRPO = "98e13469e53c27cc1ee05f81ed905de087c7c685c06d5e214e5d565bc693d20d"
 SEQUENCE_SFT = "df9c2e0918f6668bec9d7c3f5b2931240739e2a625542ce2183cd5535d0cddf6"
+SEQUENCE_GRPO = "b0fe415c6b2e78b0c1052587d89b0a7d75fcc246e25157976bc35d0439ac138e"
+GRPO_DEV = {"sampling-screenshot": (37, 39), "sampling-white": (0, 36), "greedy-screenshot": (38, 40), "greedy-white": (0, 40)}
+SEQUENCE_RESERVED_B = {
+    "sequence-sft": {"sampling-screenshot": (26, 30), "sampling-white": (0, 46), "greedy-screenshot": (91, 100)},
+    "sequence-sft-grpo": {"sampling-screenshot": (83, 94), "sampling-white": (0, 83), "greedy-screenshot": (92, 100)},
+}
 # (successes, episodes where every call was valid) per policy and cell.
 CLICK_COLOR_DEV = {
     "base": {"sampling-screenshot": (13, 14), "sampling-white": (0, 37), "greedy-screenshot": (21, 21), "greedy-white": (0, 37)},
@@ -571,8 +577,29 @@ def check_vision_training(c: Checks, adapters: Path | None) -> None:
     wins, losses = paired(res["sequence-sft", "sampling-screenshot"], res["base", "sampling-screenshot"])
     c.equal("click-sequence reserved vs base", (wins, losses, sign_test(wins, losses)), (21, 0, 2 / 2**21))
     c.equal("click-sequence reserved greedy vs base", paired(res["sequence-sft", "greedy-screenshot"], res["base", "greedy-screenshot"]), (95, 0))
+    grpo_root = root / "click-sequence-grpo"
+    grpo = json.loads((grpo_root / "grpo/training.json").read_text())
+    groups = grpo["groups"]
+    zero_signal = all(not g["varied"] or g["nonzero_gradient"] for g in groups)
+    c.equal("click-sequence GRPO groups, varied groups and updates", (len(groups), sum(g["varied"] for g in groups), grpo["optimizer_steps"]), (120, 39, 39))
+    c.equal("click-sequence GRPO varied groups all had gradient", zero_signal, True)
+    c.equal("click-sequence GRPO started from the SFT adapter and produced its hash", (grpo["manifest"]["config"]["init_adapter_sha256"], grpo["adapter_sha256"]), (SEQUENCE_SFT, SEQUENCE_GRPO))
+    grpo_dev = {}
+    for cell, expected in GRPO_DEV.items():
+        grpo_dev[cell] = vision_cell(c, grpo_root / f"eval/sequence-grpo-{cell}/report.json", list(range(60, 100)), expected, f"click-sequence GRPO dev {cell}", SEQUENCE_GRPO)
+    c.equal("click-sequence GRPO dev vs SFT, sampled", paired(grpo_dev["sampling-screenshot"], sequence["fit/sequence-sft", "sampling-screenshot"]), (26, 0))
+    reserved_b = root / "click-sequence-reserved-b"
+    protocol = sha256(reserved_b / "reserved-protocol.json")
+    res_b = {}
+    for arm, cells in SEQUENCE_RESERVED_B.items():
+        for cell, expected in cells.items():
+            res_b[arm, cell] = vision_cell(c, reserved_b / f"reserved/{arm}-{cell}/report.json", list(range(22000, 22100)), expected, f"click-sequence reserved B {arm} {cell}", SEQUENCE_GRPO if arm.endswith("grpo") else SEQUENCE_SFT, protocol)
+    wins, losses = paired(res_b["sequence-sft-grpo", "sampling-screenshot"], res_b["sequence-sft", "sampling-screenshot"])
+    c.equal("click-sequence reserved B GRPO vs SFT, sampled", (wins, losses, sign_test(wins, losses) < 1e-16), (57, 0, True))
+    c.equal("click-sequence reserved B GRPO vs SFT, greedy", paired(res_b["sequence-sft-grpo", "greedy-screenshot"], res_b["sequence-sft", "greedy-screenshot"]), (1, 0))
     if adapters is not None:
         repo = adapters / "lfm3-vl-2b-click-sequence-sft"
+        c.hashed("click-sequence GRPO adapter weights", sha256(repo / "sft-then-grpo/adapter_model.safetensors"), SEQUENCE_GRPO)
         c.hashed("click-sequence adapter weights", sha256(repo / "adapter_model.safetensors"), SEQUENCE_SFT)
         c.hashed("click-color adapter weights", sha256(repo / "click-color-sft/adapter_model.safetensors"), VISION_SFT)
 

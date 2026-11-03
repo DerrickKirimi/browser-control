@@ -26,7 +26,11 @@ from browser_control.miniwob_assets import MiniwobAssetServer, ensure_miniwob_as
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--adapter", type=Path, required=True)
+    parser.add_argument("--adapter", type=Path)
+    parser.add_argument(
+        "--base", action="store_true",
+        help="Evaluate the base model with no adapter, on the same cohort and harness",
+    )
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--frozen-protocol", type=Path)
     parser.add_argument("--arm", choices=("sft", "sft_grpo"))
@@ -35,7 +39,9 @@ def main():
         parser.error("Preserve the previous evaluation")
     if bool(args.frozen_protocol) != bool(args.arm):
         parser.error("Reserved evaluation requires both --frozen-protocol and --arm")
-    adapter_hash = hashlib.sha256(
+    if args.base == bool(args.adapter) or (args.base and args.frozen_protocol):
+        parser.error("Give exactly one of --adapter or --base; --base is development-only")
+    adapter_hash = None if args.base else hashlib.sha256(
         (args.adapter / "adapter_model.safetensors").read_bytes()
     ).hexdigest()
     frozen_metadata = {}
@@ -52,12 +58,13 @@ def main():
     from peft import PeftModel
     from preflight_lfm3_attention import LORA
 
-    validate_initial_adapter(
-        json.loads((args.adapter / "adapter_config.json").read_text()),
-        LORA,
-        revision=MODEL_REVISION,
-        model_id=MODEL_ID,
-    )
+    if not args.base:
+        validate_initial_adapter(
+            json.loads((args.adapter / "adapter_config.json").read_text()),
+            LORA,
+            revision=MODEL_REVISION,
+            model_id=MODEL_ID,
+        )
     snapshot_path = Path("source-manifest.json")
     snapshot = json.loads(snapshot_path.read_text()) if snapshot_path.exists() else None
     if snapshot is not None:
@@ -103,7 +110,10 @@ def main():
         policy = LFM3Policy.load(SAMPLING_128, "native-tools", "sdpa")
         policy.tools = BOOK_FLIGHT_TOOLS
         policy.max_prompt_tokens = 16384
-        policy.model = PeftModel.from_pretrained(policy.model, args.adapter).eval()
+        if args.base:
+            policy.model.requires_grad_(False).eval()
+        else:
+            policy.model = PeftModel.from_pretrained(policy.model, args.adapter).eval()
         policy.model.generation_config.prefill_chunk_size = 512
         if any(p.requires_grad for p in policy.model.parameters()):
             raise ValueError("Evaluation must keep all model parameters frozen")

@@ -31,3 +31,15 @@ def test_task_box_trims_background_and_empty_instruction_bar():
     page.paste(Image.new("RGB", (40, 50), (255, 255, 0)), (0, 0))
     page.paste(Image.new("RGB", (40, 30), (200, 220, 240)), (0, 20))
     assert task_box(page) == (0, 20, 40, 50)
+
+
+def test_side_by_side_holds_the_shorter_episode_and_labels_outcomes():
+    Image = pytest.importorskip("PIL.Image")
+    from browser_control.replay import side_by_side_frames
+
+    short = [Image.new("RGB", (48, 40), "red")]
+    long = [Image.new("RGB", (48, 40), c) for c in ("blue", "green", "white")]
+    frames = side_by_side_frames([short, long], ["Base", "Tuned"], [False, True])
+    assert len(frames) == 3 and frames[0].width > 2 * 48
+    with pytest.raises(ValueError):
+        side_by_side_frames([short], ["Base", "Tuned"], [False])
