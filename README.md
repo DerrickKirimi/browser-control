@@ -6,11 +6,11 @@ real browser through [MiniWoB++](https://miniwob.farama.org/) tasks in [BrowserG
 on a free T4 GPU. Each turn the model sees the page, as a screenshot or as text, and emits one action; the page's own
 reward decides success.
 
-- **From pixels alone**, a LoRA-tuned LFM3-VL-2B clicks through a two-button sequence on **95 of 100** held-out tasks
+- **From pixels alone**, a [LoRA-tuned LFM3-VL-2B](https://huggingface.co/Aptheos/lfm3-vl-2b-click-sequence-sft) clicks through a two-button sequence on **95 of 100** held-out tasks
   (greedy); the base model solves none.
-- **From the page's text**, a LoRA-tuned LFM3-1.7B books the right flight on **160 of 200** held-out ten-step tasks; the
+- **From the page's text**, a [LoRA-tuned LFM3-1.7B](https://huggingface.co/Aptheos/lfm3-1.7b-book-flight-sft) books the right flight on **160 of 200** held-out ten-step tasks; the
   base model solves none in this format.
-- **With reinforcement learning only**, LFM2-350M goes from 2/50 to 50/50 on its first browser task.
+- **With reinforcement learning only**, [LFM2-350M](https://huggingface.co/Aptheos/lfm2-350m-click-test-grpo) goes from 2/50 to 50/50 on its first browser task.
 
 ## What the model sees and writes
 
@@ -82,7 +82,7 @@ judgement to pick the right flight.
        alt="LFM3-VL-2B with the sequence adapter clicking ONE then TWO on reserved task 21001, from the screenshot alone">
 </p>
 
-Above, the vision adapter on [reserved task 21001](https://huggingface.co/spaces/Aptheos/browser-control-demo?tab=vision) of
+Above, the [vision adapter](https://huggingface.co/Aptheos/lfm3-vl-2b-click-sequence-sft) on [reserved task 21001](https://huggingface.co/spaces/Aptheos/browser-control-demo?task=21001) of
 [`click-button-sequence`](https://miniwob.farama.org/environments/click-button-sequence/): it sees only the screenshot and
 the instruction, and answers each turn with a click position. The red ring marks where its next click lands. The buttons
 overlap on this task, and it clicks the visible part of ONE, then TWO.
@@ -132,7 +132,7 @@ The vision model gets no text description of the page at all, only the screensho
 then click button TWO." It answers each turn with a click position from 0 to 1000 on each axis, sees the next screenshot,
 and is told its earlier clicks. The two buttons appear anywhere on the page and often overlap.
 
-The base model solved none of 100 reserved tasks, mostly because its calls were malformed. I trained a LoRA adapter on
+The base model solved none of 100 reserved tasks, mostly because its calls were malformed. I trained a [LoRA adapter](https://huggingface.co/Aptheos/lfm3-vl-2b-click-sequence-sft) on
 234 expert turns from 117 training tasks: for each turn, the exact screenshot and prompt the model sees, and a click on
 the visible part of the right button, kept only if the page rewarded the episode. On 100 reserved tasks the adapter then
 succeeded on **95 with greedy decoding** and **21 when sampling at temperature 1**. The locked test was the sampled one:
