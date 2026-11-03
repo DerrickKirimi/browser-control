@@ -18,7 +18,7 @@ succeeded. No judge model is involved.
        alt="LFM3-1.7B with the SFT adapter booking the shortest flight from HOT to PIE in ten steps">
 </p>
 
-Above, the SFT adapter books the shortest flight on [reserved task 10100](https://aptheos-browser-control-demo.static.hf.space/index.html#task=10100): two autocompletes, a date picker, a search,
+Above, the SFT adapter books the shortest flight on [reserved task 10100](https://huggingface.co/spaces/Aptheos/browser-control-demo?task=10100): two autocompletes, a date picker, a search,
 then the shortest of three flights. Below, LFM2-350M on [`click-test`](https://miniwob.farama.org/environments/click-test/), before and after GRPO: the base model writes
 text that isn't an action; the trained one writes `click('13')`.
 
@@ -36,7 +36,7 @@ episodes, including failures, and watch a narrated two-minute tour in the
 
 | Model | Task | Method | Result |
 | --- | --- | --- | --- |
-| LFM3-1.7B | [`book-flight`](https://miniwob.farama.org/environments/book-flight/), multi-step, unseen tasks | Base model | 0/100 |
+| LFM3-1.7B | [`book-flight`](https://miniwob.farama.org/environments/book-flight/), multi-step, unseen tasks | Base model, one call per turn, thinking off, 128 tokens | 0/100 |
 | LFM3-1.7B | [`book-flight`](https://miniwob.farama.org/environments/book-flight/), multi-step, unseen tasks | Supervised fine-tuning (SFT) on scripted expert traces | **160/200, 80.0%** (95% CI 73.9–85.0%) |
 | LFM3-1.7B | [`book-flight`](https://miniwob.farama.org/environments/book-flight/), GRPO on top of SFT | Native reward | No detectable effect, and too little variation to continue |
 | LFM3-VL-2B | [`click-color`](https://miniwob.farama.org/environments/click-color/), from screenshots | Base model, no training | 17/30 greedy, 15/30 sampled; 0/30 on a white image |
@@ -47,15 +47,28 @@ All of it fits a free T4. The LFM3 reserved evaluation took about 1.6 hours for 
 ### LFM3-1.7B on [`book-flight`](https://miniwob.farama.org/environments/book-flight/)
 
 The agent has to fill in origin and destination through autocomplete, work a read-only date picker, search, and book
-the cheapest or shortest of the flights shown, on the `book-flight-nodelay` variant. The base model failed all 100
-tasks, usually by reasoning past the token cap. When it did emit a call on separate development probes, it usually chose
-the wrong step.
+the cheapest or shortest of the flights shown, on the `book-flight-nodelay` variant. Under this harness the base model
+succeeded on none of 100 tasks. The harness asks for exactly one tool call per turn, with thinking off, at most 128 new
+tokens, and a strict parser. In 97 of the 100 episodes the last turn was prose reasoning that reached the 128-token cap
+before any call. On separate development probes, which start the model at a known step, 105 of 120 calls were
+well-formed but only 24 matched an action that reaches that step's outcome; with thinking on and 512 tokens per turn it
+was 32 of 120. That's a result for an untuned general model in this one-call format, not a measure of what LFM3 can do
+elsewhere. The counts are in the evidence dataset (`lfm3-book-flight/base-gate.json`,
+`lfm3-book-flight/development-diagnostic.json`), and `scripts/verify_reported_numbers.py` recounts each of them.
 
 An SFT adapter trained on traces from a scripted solver then succeeded on 160 of 200 reserved tasks, which were
 evaluated once, after the policy and decoder were locked. All 1,823 tool calls were well-formed, and 21 of them failed in
 the browser, in 3 episodes. Most failures come at the final step: the agent reached the results page in 197 episodes and
 booked correctly in 160. In 35 of the 40 failures it chose a flight visibly worse than the best one shown, and "shortest"
 goals failed more often (28 of 105) than "cheapest" (12 of 95).
+
+<p align="center">
+  <img src="docs/media/book-flight-failure-10108.png" width="320"
+       alt="Results page for reserved task 10108: the first flight shown takes 7h 29m">
+</p>
+
+A typical failure, reserved task 10108: the shortest flight, 7h 29m, is the first one listed, and the agent booked the
+10h 41m flight further down instead. The form was filled correctly; the comparison went wrong.
 
 **What this does and doesn't show.** This is an estimate for one policy on one task family: simulated flights in
 MiniWoB, under a sampling decoder at temperature 1 with `top_p` .95. The 0/100 and 160/200 used different seed ranges and
@@ -83,6 +96,13 @@ while most of those calls were well-formed. Failures on real screenshots are mos
 parser rejects without repair. A later variation check found real differences between samples of the untrained model,
 though only 5 of 48 samples were valid clicks in the wrong place, so reward here would teach format as well as vision.
 See the [vision baseline](docs/results/lfm3-vision-baseline.md). Vision training is the next stage of this project.
+
+<p align="center">
+  <img src="docs/media/vision-screenshot-vs-white.png" width="520"
+       alt="The base model clicks the cyan box on the real screenshot and a corner on a white image">
+</p>
+
+Base LFM3-VL-2B, greedy, on `click-color` task 30: the same prompt, with and without the pixels.
 
 ### LFM2-350M on [`click-test`](https://miniwob.farama.org/environments/click-test/)
 
