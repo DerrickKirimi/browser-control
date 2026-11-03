@@ -304,6 +304,14 @@ model files. Supporting packages without a bearing on the numbers are kept curre
 - **GRPO masks are checked.** Browser observations are context and receive zero policy gradient, checked on the real model in a one-update run. See the [book-flight protocol](docs/lfm3-book-flight.md).
 - **An element-ID control.** Consistently renumbering page IDs moved no skill by more than 1 of 20 probes, which is weak evidence against ID memorisation.
 
+## Related work
+
+Liquid AI's cookbook trains LFM2-350M on MiniWoB++ `click-test` with GRPO through TRL and OpenEnv
+([example](https://github.com/Liquid4All/cookbook/tree/main/examples/browser-control),
+[write-up by Pau Labarta Bajo](https://paulabartabajo.substack.com/p/fine-tuning-lfm2-350m-for-browser)), and names
+`book-flight` and vision models as next steps. This project measures that `click-test` result across seeds and takes both
+next steps, with held-out evaluation.
+
 ## Repository guide
 
 | Path | Purpose |
