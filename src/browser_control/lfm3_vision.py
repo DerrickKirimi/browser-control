@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import hashlib
 import io
 import time
 from dataclasses import dataclass
 from importlib.metadata import version
+from pathlib import Path
 from typing import Any
 
 from browser_control.hardware import inspect_cuda_device
@@ -33,6 +35,22 @@ COORDINATE_TOOLS = [
         },
     }
 ]
+
+
+def adapter_hash(adapter) -> str | None:
+    if adapter is None:
+        return None
+    return hashlib.sha256((Path(adapter) / "adapter_model.safetensors").read_bytes()).hexdigest()
+
+
+def attach_adapter(policy, adapter) -> None:
+    """PEFT injects LoRA layers in place, so policy.model then samples with the adapter."""
+    if adapter is None:
+        return
+    from peft import PeftModel
+
+    PeftModel.from_pretrained(policy.model, adapter, is_trainable=False)
+    policy.model.requires_grad_(False).eval()
 
 
 def build_vision_messages(observation: VisionObservation):
