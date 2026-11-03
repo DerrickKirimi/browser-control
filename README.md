@@ -3,14 +3,15 @@
 I train small [Liquid AI](https://huggingface.co/LiquidAI) models, [LFM3-VL-2B](https://huggingface.co/LiquidAI/LFM3-VL-2B),
 [LFM3-1.7B](https://huggingface.co/LiquidAI/LFM3-1.7B) and [LFM2-350M](https://huggingface.co/LiquidAI/LFM2-350M), to operate a
 real browser through [MiniWoB++](https://miniwob.farama.org/) tasks in [BrowserGym](https://github.com/ServiceNow/BrowserGym),
-on the free T4 GPUs of [Google Colab](https://colab.research.google.com/) and [Kaggle](https://www.kaggle.com/). Each turn the model sees the page, as a screenshot or as text, and emits one action; the page's own
-reward decides success.
+on the free T4 GPUs of [Google Colab](https://colab.research.google.com/) and [Kaggle](https://www.kaggle.com/). Each turn the model sees the page, as a screenshot or as text, and emits one action toward
+completing the task. Success is decided by the reward that each MiniWoB++ task computes itself, not by me or by another
+model.
 
 - **From pixels alone**, [LFM3-VL-2B tuned with SFT, then GRPO](https://huggingface.co/Aptheos/lfm3-vl-2b-click-sequence-sft)
   clicks through a two-button sequence on **92 of 100** held-out tasks greedy and **83 of 100** sampled at temperature 1;
-  the base model solves none. GRPO alone took sampled success from 26 to 83.
+  the base model solved none in this experiment. GRPO alone took sampled success from 26 to 83.
 - **From the page's text**, a [LoRA-tuned LFM3-1.7B](https://huggingface.co/Aptheos/lfm3-1.7b-book-flight-sft) books the right flight on **160 of 200** held-out ten-step tasks; the
-  base model solves none in this format.
+  base model solved none in this experiment's one-call format.
 - **With reinforcement learning only**, [LFM2-350M](https://huggingface.co/Aptheos/lfm2-350m-click-test-grpo) goes from 2/50 to 50/50 on its first browser task.
 
 ## How it works
@@ -53,13 +54,14 @@ episodes, including failures, and watch a narrated two-minute tour in the
 
 [MiniWoB++](https://miniwob.farama.org/) is a set of more than a hundred small web pages, each with an instruction and its
 own scorer: "click the button", "book the shortest flight", "click the cyan box". A task is generated from a seed, so
-seed 10100 always produces the same airports, dates and flights, and the page itself reports success with a reward of
-1. [BrowserGym](https://github.com/ServiceNow/BrowserGym) runs these pages in a real browser and turns each one into a
-turn-by-turn exchange with a model.
+seed 10100 always produces the same airports, dates and flights. When an episode ends, the task's scorer returns a reward:
+1 for success, 0 for failure. [BrowserGym](https://github.com/ServiceNow/BrowserGym) runs these pages in a real browser
+and turns each one into a turn-by-turn exchange with a model.
 
 The model never touches the browser directly. Each turn it receives the instruction and a description of the page, and
-it must answer with exactly one action. A strict parser reads that action, and anything else, an explanation, two
-actions, a malformed call, ends the episode with reward 0. Nothing is repaired or retried.
+it must answer with exactly one action in the required format. A strict parser reads that action; any other answer
+ends the episode with reward 0, whether it's an explanation, two actions, or a call that's almost right. Nothing is
+repaired or retried.
 
 **What it sees.** For the text models, the page arrives as an accessibility tree: the page's elements, one per line, each
 interactive one with an id. On the left is the page as a person sees it; on the right, the whole of what the text model
@@ -144,9 +146,9 @@ The vision model gets no text description of the page at all, only the screensho
 then click button TWO." It answers each turn with a click position from 0 to 1000 on each axis, sees the next screenshot,
 and is told its earlier clicks. The two buttons appear anywhere on the page and often overlap.
 
-The base model solved none of 100 reserved tasks, mostly because its calls were malformed. I trained a [LoRA adapter](https://huggingface.co/Aptheos/lfm3-vl-2b-click-sequence-sft) on
+In this experiment the base model solved none of 100 reserved tasks, mostly because its calls were malformed. I trained a [LoRA adapter](https://huggingface.co/Aptheos/lfm3-vl-2b-click-sequence-sft) on
 234 expert turns from 117 training tasks: for each turn, the exact screenshot and prompt the model sees, and a click on
-the visible part of the right button, kept only if the page rewarded the episode. On 100 reserved tasks the adapter then
+the visible part of the right button, kept only if the task's own scorer rewarded the episode. On 100 reserved tasks the adapter then
 succeeded on **95 with greedy decoding** and **21 when sampling at temperature 1**. The locked test was the sampled one:
 21 wins against the base model and no losses (exact sign test, p ≈ 1e-6). With a white image in place of the screenshot
 it solved none, so the clicks depend on the pixels.
@@ -161,7 +163,7 @@ while episodes where every call was valid succeeded 95% of the time. The visual 
 temperature 1 wasn't. Unlike the book-flight adapter, sampled episodes now varied in reward, which is what GRPO needs.
 
 I used a simplified GRPO over whole episodes. For each of the same 120 training tasks it samples 4 episodes, scores each
-only by the page's reward, and weights every turn of an episode by that episode's reward minus its group's mean. That's
+only by the task's own reward, and weights every turn of an episode by that episode's reward minus its group's mean. That's
 one on-policy update per group, with no clipping, KL penalty or standard-deviation scaling. Then a second locked
 evaluation on 100 fresh tasks (seeds 22000–22099), against the SFT adapter:
 
