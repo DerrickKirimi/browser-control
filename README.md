@@ -4,6 +4,31 @@ I train small [Liquid AI](https://huggingface.co/LiquidAI) models to operate a r
 BrowserGym, on a free T4 GPU. The policy reads the page and emits one tool call per turn, and the browser environment's
 own reward decides success.
 
+## How it works
+
+Each turn the policy reads the page's accessibility tree and writes one tool call, such as `fill` a field or `click` an
+element by its id. BrowserGym executes it in a real Chromium page, and MiniWoB's own reward says whether the task
+succeeded. No judge model is involved.
+
+<p align="center">
+  <img src="docs/media/book-flight-reserved-10100.gif" width="420"
+       alt="LFM3-1.7B with the SFT adapter booking the shortest flight from HOT to PIE in ten steps">
+</p>
+
+Above, the SFT adapter books the shortest flight on reserved task 10100: two autocompletes, a date picker, a search,
+then the shortest of three flights. Below, LFM2-350M on `click-test`, before and after GRPO: the base model writes
+text that isn't an action; the trained one writes `click('13')`.
+
+| Base LFM2-350M | After GRPO |
+| --- | --- |
+| <img src="docs/media/click-test-base.gif" width="300" alt="Base model writes text instead of an action"> | <img src="docs/media/click-test-grpo.gif" width="300" alt="Trained model clicks the button"> |
+
+These are replays, not screen recordings of a live run. MiniWoB tasks are seeded, so resetting a task and applying the
+actions the model recorded during evaluation redraws exactly what it did; a replay that doesn't reach the recorded
+reward fails. `scripts/render_episode_replay.py` makes them from the evaluation reports. You can step through more
+episodes, including failures, and watch a narrated two-minute tour in the
+[Space](https://huggingface.co/spaces/Aptheos/browser-control-demo).
+
 ## Results
 
 | Model | Task | Method | Result |
@@ -115,6 +140,7 @@ On 2–3 November I reran the LFM3 adapter check and the LFM2 commands from a cl
 | `tests/` | Unit, parser and trainer contract tests |
 | `docs/` | Protocols and [result reports](docs/results/), including [LFM3 click-test](docs/results/lfm3-click-test.md) |
 | `notebooks/` | Records of the July LFM2 runs on Colab |
+| `docs/media/` | Episode replays rendered by `scripts/render_episode_replay.py` |
 
 ## License
 
