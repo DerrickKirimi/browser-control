@@ -6,6 +6,69 @@ to operate a real browser through [MiniWoB++](https://miniwob.farama.org/) tasks
 [BrowserGym](https://github.com/ServiceNow/BrowserGym), on a free T4 GPU. The policy reads the page and emits one tool call per turn, and the browser environment's
 own reward decides success.
 
+## What the model sees and writes
+
+[MiniWoB++](https://miniwob.farama.org/) is a set of more than a hundred small web pages, each with an instruction and its
+own scorer: "click the button", "book the shortest flight", "click the cyan box". A task is generated from a seed, so
+seed 10100 always produces the same airports, dates and flights, and the page itself reports success with a reward of
+1. [BrowserGym](https://github.com/ServiceNow/BrowserGym) runs these pages in a real browser and turns each one into a
+turn-by-turn exchange with a model.
+
+The model never touches the browser directly. Each turn it receives the instruction and a description of the page, and
+it must answer with exactly one action. A strict parser reads that action, and anything else, an explanation, two
+actions, a malformed call, ends the episode with reward 0. Nothing is repaired or retried.
+
+**What it sees.** For the text models, the page arrives as an accessibility tree: the page's elements, one per line, each
+interactive one with an id. This is the whole page for [`click-test`](https://miniwob.farama.org/environments/click-test/):
+
+```text
+Goal: Click the button.
+RootWebArea 'Click Test Task', focused
+	[13] button 'Click Me!'
+```
+
+and this is the start of a [`book-flight`](https://miniwob.farama.org/environments/book-flight/) page:
+
+```text
+Goal: Book the shortest one-way flight from: HOT to: PIE on 10/24/2016.
+	[17] heading 'Book Your One-Way Flight'
+	[19] textbox 'From:'
+	[21] textbox 'To:'
+	StaticText 'Departure Date'
+	[25] textbox ''
+	[27] button 'Search'
+```
+
+The vision model gets none of that: only a screenshot and the instruction, and it answers with a click position from 0
+to 1000 on each axis.
+
+**What it writes.** On `click-test` the whole correct answer is `click('13')`. On `book-flight`, LFM3 answers in its own
+tool-calling format, one call per turn, and needs about ten turns: type the origin, pick it from the autocomplete list,
+do the same for the destination, open the date picker, page to the right month, pick the day, search, then compare the
+flights and book the right one. The first turn of the episode above is:
+
+```text
+<tool_call>
+<function=fill>
+<parameter=bid>
+19
+</parameter>
+<parameter=value>
+HOT
+</parameter>
+</function>
+</tool_call>
+```
+
+**Why `click-test` matters even though it's trivial.** The prompt describes the action format and even gives
+`click('13')` as its example, so the task tests one thing: whether the model will answer in the required form at all.
+Base LFM2-350M mostly didn't. It wrote near misses such as `click('Click Test Task')`, with the page's title where the id
+belongs, or `click(<button id="13">Click Me!</button>)`, with the button's HTML inside the call, and succeeded 2 times in
+50. After GRPO, trained only on that reward, it wrote `click('13')` 50 times in 50, for each of three training seeds.
+That's the first hurdle for any small model acting through tools: no task can be solved before the output is something
+the environment can execute. `book-flight` then asks for the same discipline across ten dependent steps, plus the
+judgement to pick the right flight.
+
 ## How it works
 
 Each turn the policy reads the page's accessibility tree and writes one tool call, such as `fill` a field or `click` an
@@ -20,11 +83,11 @@ succeeded. No judge model is involved.
 
 Above, the SFT adapter books the shortest flight on [reserved task 10100](https://huggingface.co/spaces/Aptheos/browser-control-demo?task=10100): two autocompletes, a date picker, a search,
 then the shortest of three flights. Below, LFM2-350M on [`click-test`](https://miniwob.farama.org/environments/click-test/), before and after GRPO: the base model writes
-text that isn't an action; the trained one writes `click('13')`.
+something close to an action that the parser can't execute; the trained one writes `click('13')`.
 
 | Base LFM2-350M | After GRPO |
 | --- | --- |
-| <img src="docs/media/click-test-base.gif" width="300" alt="Base model writes text instead of an action"> | <img src="docs/media/click-test-grpo.gif" width="300" alt="Trained model clicks the button"> |
+| <img src="docs/media/click-test-base.gif" width="300" alt="Base model writes a call the parser cannot execute"> | <img src="docs/media/click-test-grpo.gif" width="300" alt="Trained model clicks the button"> |
 
 These are replays, not screen recordings of a live run. MiniWoB tasks are seeded, so resetting a task and applying the
 actions the model recorded during evaluation redraws exactly what it did; a replay that doesn't reach the recorded
