@@ -32,7 +32,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from browser_control.book_flight_diagnostic import summarize_rollouts  # noqa: E402
 
-BUNDLE_SHA256 = "ff56016cbb197de088a05d74e52548eea4e64b878e3f94cde5761001e2a6627b"
+BUNDLE_SHA256 = "a8333c43823501830e907e6b287d84d2858fa2bf7fb8b536b5f1061709d2c89c"
 Z = 1.959963984540054
 PRIMARY_SFT = "53f80cc120b5b096f4c1d7d3d7490f13ff6c00e2f2877213b213e54e35791135"
 REPLICA_SFT = "9840e091b5b9549d89de3a0281c7351c9d498aab0352639fbc316ac8855d0aa1"
@@ -52,6 +52,29 @@ VISION_MATRIX = {
     "sampling-white": {"click-color": (0, 27), "click-shape": (0, 30), "click-shades": (0, 30)},
 }
 BOOK = "lfm3-book-flight"
+VISION_SFT = "1969938677a35eb4841677b0c2d200109903dc696f77c474626deebbfe324c1c"
+VISION_GRPO = "98e13469e53c27cc1ee05f81ed905de087c7c685c06d5e214e5d565bc693d20d"
+SEQUENCE_SFT = "df9c2e0918f6668bec9d7c3f5b2931240739e2a625542ce2183cd5535d0cddf6"
+# (successes, episodes where every call was valid) per policy and cell.
+CLICK_COLOR_DEV = {
+    "base": {"sampling-screenshot": (13, 14), "sampling-white": (0, 37), "greedy-screenshot": (21, 21), "greedy-white": (0, 37)},
+    "sft": {"sampling-screenshot": (40, 40), "sampling-white": (0, 38), "greedy-screenshot": (40, 40), "greedy-white": (0, 40)},
+    "grpo": {"sampling-screenshot": (40, 40), "sampling-white": (1, 40), "greedy-screenshot": (40, 40), "greedy-white": (6, 40)},
+}
+CLICK_COLOR_RESERVED = {
+    "base": {"sampling-screenshot": (30, 31), "sampling-white": (0, 96), "greedy-screenshot": (63, 63)},
+    "sft": {"sampling-screenshot": (100, 100), "sampling-white": (0, 99), "greedy-screenshot": (100, 100)},
+    "grpo": {"sampling-screenshot": (100, 100), "sampling-white": (6, 98), "greedy-screenshot": (100, 100)},
+}
+SEQUENCE_DEV = {
+    "baseline/base": {"sampling-screenshot": (0, 4), "sampling-white": (0, 12), "greedy-screenshot": (0, 5), "greedy-white": (0, 40)},
+    "baseline/sft": {"sampling-screenshot": (1, 33), "sampling-white": (0, 27), "greedy-screenshot": (0, 40), "greedy-white": (0, 40)},
+    "fit/sequence-sft": {"sampling-screenshot": (11, 12), "sampling-white": (0, 24), "greedy-screenshot": (37, 40), "greedy-white": (0, 40)},
+}
+SEQUENCE_RESERVED = {
+    "base": {"sampling-screenshot": (0, 12), "sampling-white": (0, 26), "greedy-screenshot": (0, 13)},
+    "sequence-sft": {"sampling-screenshot": (21, 22), "sampling-white": (0, 54), "greedy-screenshot": (95, 100)},
+}
 
 
 def wilson(successes: int, samples: int) -> tuple[float, float]:
@@ -477,6 +500,83 @@ def check_vision(c: Checks) -> None:
     c.equal("vision second arm has identical outcomes", second, first)
 
 
+def sign_test(wins: int, losses: int) -> float:
+    """Exact two-sided sign test on discordant pairs."""
+    n = wins + losses
+    return min(1.0, 2 * sum(math.comb(n, i) for i in range(min(wins, losses) + 1)) / 2**n) if n else 1.0
+
+
+def vision_cell(c: Checks, path: Path, seeds: list[int], expected: tuple[int, int], label: str, adapter=None, protocol=None) -> dict:
+    report = json.loads(path.read_text())
+    c.equal(f"{label} complete", report["status"], "complete")
+    episodes = report["conditions"][0]["episodes"]
+    c.equal(f"{label} seeds", [e["task_seed"] for e in episodes], seeds)
+    c.equal(f"{label} success is native terminal reward", all(e["success"] == (e["done"] and e["native_reward"] > 0) for e in episodes), True)
+    c.equal(f"{label} successes and all-valid", (sum(e["success"] for e in episodes), sum(e["valid_action"] for e in episodes)), expected)
+    c.equal(f"{label} adapter", report["manifest"]["config"]["adapter_sha256"], adapter)
+    if protocol is not None:
+        c.equal(f"{label} locked protocol", report.get("reserved_protocol_sha256"), protocol)
+    return {e["task_seed"]: e["success"] for e in episodes}
+
+
+def paired(a: dict, b: dict) -> tuple[int, int]:
+    return sum(a[k] and not b[k] for k in a), sum(b[k] and not a[k] for k in a)
+
+
+def check_vision_training(c: Checks, adapters: Path | None) -> None:
+    root = c.root / "vision"
+    fit = root / "click-color-fit"
+    hashes = {"base": None, "sft": VISION_SFT, "grpo": VISION_GRPO}
+    dev = {}
+    for arm, cells in CLICK_COLOR_DEV.items():
+        for cell, expected in cells.items():
+            dev[arm, cell] = vision_cell(c, fit / f"eval/{arm}-{cell}/report.json", list(range(60, 100)), expected, f"click-color dev {arm} {cell}", hashes[arm])
+    c.equal("click-color dev SFT vs base", paired(dev["sft", "sampling-screenshot"], dev["base", "sampling-screenshot"]), (27, 0))
+    c.equal("click-color dev GRPO vs base", paired(dev["grpo", "sampling-screenshot"], dev["base", "sampling-screenshot"]), (27, 0))
+    grpo = json.loads((fit / "grpo/training.json").read_text())
+    varied = sum(check["varied"] for check in grpo["gradient_checks"])
+    zero = all((check["norm"] > 0) == check["varied"] for check in grpo["gradient_checks"])
+    c.equal("click-color GRPO varied groups, and zero gradient exactly when unvaried", (len(grpo["gradient_checks"]), varied, zero), (120, 18, True))
+    reserved = root / "click-color-reserved"
+    protocol = sha256(reserved / "reserved-protocol.json")
+    res = {}
+    for arm, cells in CLICK_COLOR_RESERVED.items():
+        for cell, expected in cells.items():
+            res[arm, cell] = vision_cell(c, reserved / f"reserved/{arm}-{cell}/report.json", list(range(21000, 21100)), expected, f"click-color reserved {arm} {cell}", hashes[arm], protocol)
+    for arm in ("sft", "grpo"):
+        wins, losses = paired(res[arm, "sampling-screenshot"], res["base", "sampling-screenshot"])
+        c.equal(f"click-color reserved {arm} vs base", (wins, losses, sign_test(wins, losses) < 1e-20), (70, 0, True))
+    sequence = {}
+    for name, cells in SEQUENCE_DEV.items():
+        stage, arm = name.split("/")
+        folder = root / f"click-sequence-{stage}" / "eval"
+        prefix = arm if stage == "baseline" else "sequence-sft"
+        adapter = {"base": None, "sft": VISION_SFT, "sequence-sft": SEQUENCE_SFT}[arm]
+        for cell, expected in cells.items():
+            sequence[name, cell] = vision_cell(c, folder / f"{prefix}-{cell}/report.json", list(range(60, 100)), expected, f"click-sequence dev {name} {cell}", adapter)
+    c.equal("click-sequence dev fit vs base", paired(sequence["fit/sequence-sft", "sampling-screenshot"], sequence["baseline/base", "sampling-screenshot"]), (11, 0))
+    training = json.loads((root / "click-sequence-fit/sft/training.json").read_text())
+    corpus = json.loads((root / "click-sequence-fit/experts/experts.json").read_text())
+    c.equal("click-sequence SFT updates and examples", (len(training["updates"]), len(corpus["examples"])), (117, 234))
+    c.equal("click-sequence excluded layouts", [e["task_seed"] for e in corpus["excluded"]], [140, 179, 223])
+    c.equal("click-sequence SFT started from the click-color adapter", training["manifest"]["config"]["init_adapter_sha256"], VISION_SFT)
+    variation = json.loads((root / "click-sequence-fit/variation-sequence-sft/report.json").read_text())["groups"]
+    c.equal("click-sequence variation reward-varied groups", sum(g["summary"]["native_reward_varied"] for g in variation), 8)
+    reserved = root / "click-sequence-reserved"
+    protocol = sha256(reserved / "reserved-protocol.json")
+    res = {}
+    for arm, cells in SEQUENCE_RESERVED.items():
+        for cell, expected in cells.items():
+            res[arm, cell] = vision_cell(c, reserved / f"reserved/{arm}-{cell}/report.json", list(range(21000, 21100)), expected, f"click-sequence reserved {arm} {cell}", None if arm == "base" else SEQUENCE_SFT, protocol)
+    wins, losses = paired(res["sequence-sft", "sampling-screenshot"], res["base", "sampling-screenshot"])
+    c.equal("click-sequence reserved vs base", (wins, losses, sign_test(wins, losses)), (21, 0, 2 / 2**21))
+    c.equal("click-sequence reserved greedy vs base", paired(res["sequence-sft", "greedy-screenshot"], res["base", "greedy-screenshot"]), (95, 0))
+    if adapters is not None:
+        repo = adapters / "lfm3-vl-2b-click-sequence-sft"
+        c.hashed("click-sequence adapter weights", sha256(repo / "adapter_model.safetensors"), SEQUENCE_SFT)
+        c.hashed("click-color adapter weights", sha256(repo / "click-color-sft/adapter_model.safetensors"), VISION_SFT)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--evidence", type=Path, default=Path("evidence"))
@@ -495,6 +595,7 @@ def main() -> int:
         lambda: check_reserved(c),
         lambda: check_grpo(c),
         lambda: check_vision(c),
+        lambda: check_vision_training(c, args.adapters),
         lambda: check_release_rerun(c),
     ):
         try:

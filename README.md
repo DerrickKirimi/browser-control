@@ -1,10 +1,16 @@
 # Browser control with small Liquid models
 
-I train small [Liquid AI](https://huggingface.co/LiquidAI) models, [LFM3-1.7B](https://huggingface.co/LiquidAI/LFM3-1.7B),
-[LFM2-350M](https://huggingface.co/LiquidAI/LFM2-350M) and, as a baseline so far, [LFM3-VL-2B](https://huggingface.co/LiquidAI/LFM3-VL-2B),
-to operate a real browser through [MiniWoB++](https://miniwob.farama.org/) tasks in
-[BrowserGym](https://github.com/ServiceNow/BrowserGym), on a free T4 GPU. The policy reads the page and emits one tool call per turn, and the browser environment's
-own reward decides success.
+I train small [Liquid AI](https://huggingface.co/LiquidAI) models, [LFM3-VL-2B](https://huggingface.co/LiquidAI/LFM3-VL-2B),
+[LFM3-1.7B](https://huggingface.co/LiquidAI/LFM3-1.7B) and [LFM2-350M](https://huggingface.co/LiquidAI/LFM2-350M), to operate a
+real browser through [MiniWoB++](https://miniwob.farama.org/) tasks in [BrowserGym](https://github.com/ServiceNow/BrowserGym),
+on a free T4 GPU. Each turn the model sees the page, as a screenshot or as text, and emits one action; the page's own
+reward decides success.
+
+- **From pixels alone**, a LoRA-tuned LFM3-VL-2B clicks through a two-button sequence on **95 of 100** held-out tasks
+  (greedy); the base model solves none.
+- **From the page's text**, a LoRA-tuned LFM3-1.7B books the right flight on **160 of 200** held-out ten-step tasks; the
+  base model solves none in this format.
+- **With reinforcement learning only**, LFM2-350M goes from 2/50 to 50/50 on its first browser task.
 
 ## What the model sees and writes
 
@@ -71,8 +77,18 @@ judgement to pick the right flight.
 
 ## How it works
 
-Each turn the policy reads the page's accessibility tree and writes one tool call, such as `fill` a field or `click` an
-element by its id. [BrowserGym](https://github.com/ServiceNow/BrowserGym) executes it in a real [Chromium](https://www.chromium.org/)
+<p align="center">
+  <img src="docs/media/click-sequence-reserved-21001.gif" width="360"
+       alt="LFM3-VL-2B with the sequence adapter clicking ONE then TWO on reserved task 21001, from the screenshot alone">
+</p>
+
+Above, the vision adapter on [reserved task 21001](https://huggingface.co/spaces/Aptheos/browser-control-demo?tab=vision) of
+[`click-button-sequence`](https://miniwob.farama.org/environments/click-button-sequence/): it sees only the screenshot and
+the instruction, and answers each turn with a click position. The red ring marks where its next click lands. The buttons
+overlap on this task, and it clicks the visible part of ONE, then TWO.
+
+The text models work the same way but read the page's accessibility tree instead of pixels, and write one tool call,
+such as `fill` a field or `click` an element by its id. [BrowserGym](https://github.com/ServiceNow/BrowserGym) executes it in a real [Chromium](https://www.chromium.org/)
 page, and [MiniWoB++](https://miniwob.farama.org/)'s own reward says whether the task
 succeeded. No judge model is involved.
 
@@ -99,13 +115,54 @@ episodes, including failures, and watch a narrated two-minute tour in the
 
 | Model | Task | Method | Result |
 | --- | --- | --- | --- |
+| LFM3-VL-2B | [`click-button-sequence`](https://miniwob.farama.org/environments/click-button-sequence/), screenshots only, unseen tasks | Base model | 0/100 |
+| LFM3-VL-2B | [`click-button-sequence`](https://miniwob.farama.org/environments/click-button-sequence/), screenshots only, unseen tasks | SFT on 234 expert clicks | **95/100 greedy** (95% CI 89–98%); 21/100 sampled at temperature 1 |
+| LFM3-VL-2B | [`click-color`](https://miniwob.farama.org/environments/click-color/), screenshots only, unseen tasks | Base, then SFT | 30/100 → 100/100 sampled, mostly a format fix (see below) |
 | LFM3-1.7B | [`book-flight`](https://miniwob.farama.org/environments/book-flight/), multi-step, unseen tasks | Base model, one call per turn, thinking off, 128 tokens | 0/100 |
 | LFM3-1.7B | [`book-flight`](https://miniwob.farama.org/environments/book-flight/), multi-step, unseen tasks | Supervised fine-tuning (SFT) on scripted expert traces | **160/200, 80.0%** (95% CI 73.9–85.0%) |
 | LFM3-1.7B | [`book-flight`](https://miniwob.farama.org/environments/book-flight/), GRPO on top of SFT | Native reward | No detectable effect, and too little variation to continue |
-| LFM3-VL-2B | [`click-color`](https://miniwob.farama.org/environments/click-color/), from screenshots | Base model, no training | 17/30 greedy, 15/30 sampled; 0/30 on a white image |
 | LFM2-350M | [`click-test`](https://miniwob.farama.org/environments/click-test/), one fixed prompt | GRPO, 3 seeds | 2/50 → 50/50 for each seed |
 
-All of it fits a free T4. The LFM3 reserved evaluation took about 1.6 hours for 200 episodes, including setup.
+All of it fits a free T4. The LFM3 reserved evaluation took about 1.6 hours for 200 episodes, including setup. Every
+"unseen tasks" number comes from a reserved seed range evaluated once, after the protocol, policy and decoder were locked.
+
+### LFM3-VL-2B: clicking a sequence from pixels
+
+The vision model gets no text description of the page at all, only the screenshot and the instruction "Click button ONE,
+then click button TWO." It answers each turn with a click position from 0 to 1000 on each axis, sees the next screenshot,
+and is told its earlier clicks. The two buttons appear anywhere on the page and often overlap.
+
+The base model solved none of 100 reserved tasks, mostly because its calls were malformed. I trained a LoRA adapter on
+234 expert turns from 117 training tasks: for each turn, the exact screenshot and prompt the model sees, and a click on
+the visible part of the right button, kept only if the page rewarded the episode. On 100 reserved tasks the adapter then
+succeeded on **95 with greedy decoding** and **21 when sampling at temperature 1**. The locked test was the sampled one:
+21 wins against the base model and no losses (exact sign test, p ≈ 1e-6). With a white image in place of the screenshot
+it solved none, so the clicks depend on the pixels.
+
+**What this does and doesn't show.** It's one MiniWoB task family with at most four clicks, not general computer use.
+Sampling is the weak spot: 78 of the 100 sampled episodes ended on a malformed call, while episodes where every call was
+valid succeeded 95% of the time. So the visual decision is learned, and staying in format at temperature 1 isn't yet.
+That's a natural target for reinforcement learning, because sampled episodes now vary in reward.
+
+**One click first.** Before the sequence, I trained a one-click adapter on
+[`click-color`](https://miniwob.farama.org/environments/click-color/) ("click the cyan box"). On 100 reserved tasks it
+went from 30 to 100 successes against the base model, but the base model already picked the right box in 30 of its 31
+valid calls, so that gain is mainly the call format. A GRPO adapter matched it, but solved 6 of 100 tasks on white
+images, above my declared limit of 5, so I don't claim it. The sequence adapter started from the one-click adapter, which
+on its own solved 1 of 40 development sequences: it had the format, and it learned the sequence.
+
+### LFM3-VL-2B before training
+
+The untrained model already uses the pixels when it produces a valid call: on the one-click tasks it scored 0 of 120
+on a white image. Its failures on real screenshots were mostly malformed calls, which the strict parser rejects. See the
+[vision baseline](docs/results/lfm3-vision-baseline.md).
+
+<p align="center">
+  <img src="docs/media/vision-screenshot-vs-white.png" width="520"
+       alt="The base model clicks the cyan box on the real screenshot and a corner on a white image">
+</p>
+
+Base LFM3-VL-2B, greedy, on `click-color` task 30: the same prompt, with and without the pixels.
 
 ### LFM3-1.7B on [`book-flight`](https://miniwob.farama.org/environments/book-flight/)
 
@@ -151,22 +208,6 @@ effect. That policy did vary (2 of 8 groups at temperature 1, 3 of 8 at 1.25), a
 after seeing those checks, which favours finding an effect. This says GRPO had little signal on these policies, not that
 GRPO can't help a less confident one. So there is no GRPO adapter from this work.
 
-### LFM3-VL-2B baseline
-
-Before any vision training I measured the base model on one-click tasks from screenshots only, with no accessibility
-tree or element IDs. Pixels matter: on the two tasks that can succeed in one click, it scored 0 of 120 on a white image,
-while most of those calls were well-formed. Failures on real screenshots are mostly malformed calls, which the strict
-parser rejects without repair. A later variation check found real differences between samples of the untrained model,
-though only 5 of 48 samples were valid clicks in the wrong place, so reward here would teach format as well as vision.
-See the [vision baseline](docs/results/lfm3-vision-baseline.md). Vision training is the next stage of this project.
-
-<p align="center">
-  <img src="docs/media/vision-screenshot-vs-white.png" width="520"
-       alt="The base model clicks the cyan box on the real screenshot and a corner on a white image">
-</p>
-
-Base LFM3-VL-2B, greedy, on `click-color` task 30: the same prompt, with and without the pixels.
-
 ### LFM2-350M on [`click-test`](https://miniwob.farama.org/environments/click-test/)
 
 This is the easy one, and its limit matters: `click-test` has a single fixed prompt, and a formatting curriculum was
@@ -179,6 +220,7 @@ See the [three-seed report](docs/results/phase5-three-seed-reproducibility.md).
 
 | Repository | Contents |
 | --- | --- |
+| [`Aptheos/lfm3-vl-2b-click-sequence-sft`](https://huggingface.co/Aptheos/lfm3-vl-2b-click-sequence-sft) | The click-sequence adapter (95/100 greedy), and the one-click `click-color` adapter it started from |
 | [`Aptheos/lfm3-1.7b-book-flight-sft`](https://huggingface.co/Aptheos/lfm3-1.7b-book-flight-sft) | The 160/200 adapter, and a second-seed replica for corroboration |
 | [`Aptheos/lfm2-350m-click-test-grpo`](https://huggingface.co/Aptheos/lfm2-350m-click-test-grpo) | Three GRPO adapters, seeds 23, 47 and 71 |
 | [`Aptheos/lfm-browser-control-evidence`](https://huggingface.co/datasets/Aptheos/lfm-browser-control-evidence) | Raw reports with every episode, the expert corpus and screenshots |
