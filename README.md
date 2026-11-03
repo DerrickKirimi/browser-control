@@ -8,10 +8,11 @@ completing the task. Success is decided by the reward that each MiniWoB++ task c
 
 - **From pixels alone**, [LFM3-VL-2B tuned with SFT, then GRPO](https://huggingface.co/Aptheos/lfm3-vl-2b-click-sequence-sft)
   clicks through a two-button sequence on **92 of 100** held-out tasks greedy and **83 of 100** sampled at temperature 1;
-  the base model solved none in this experiment. GRPO alone took sampled success from 26 to 83.
-- **From the page's text**, a [LoRA-tuned LFM3-1.7B](https://huggingface.co/Aptheos/lfm3-1.7b-book-flight-sft) books the right flight on **160 of 200** held-out ten-step tasks; the
+  the base model solved none in this experiment. Adding GRPO to the SFT adapter raised sampled success from **26/100 to 83/100 on the same fresh tasks**;
+  greedy success on those tasks was **91/100 before GRPO and 92/100 after it**.
+- **From the page's text**, an [SFT-trained LoRA adapter for LFM3-1.7B](https://huggingface.co/Aptheos/lfm3-1.7b-book-flight-sft) books the right flight on **160 of 200** held-out ten-step tasks; the
   base model solved none in this experiment's one-call format.
-- **With reinforcement learning only**, [LFM2-350M](https://huggingface.co/Aptheos/lfm2-350m-click-test-grpo) goes from 2/50 to 50/50 on its first browser task.
+- **With reinforcement learning using GRPO only**, [LFM2-350M](https://huggingface.co/Aptheos/lfm2-350m-click-test-grpo) goes from 2/50 to 50/50 on its first browser task.
 
 ## Links
 
@@ -148,6 +149,11 @@ judgement to pick the right flight.
 | LFM3-1.7B | [`book-flight`](https://miniwob.farama.org/environments/book-flight/), multi-step, unseen tasks | Supervised fine-tuning (SFT) on scripted expert traces | **160/200, 80.0%** (95% CI 73.9–85.0%) |
 | LFM3-1.7B | [`book-flight`](https://miniwob.farama.org/environments/book-flight/), GRPO on top of SFT | Native reward | No detectable effect, and too little variation to continue |
 | LFM2-350M | [`click-test`](https://miniwob.farama.org/environments/click-test/), one fixed prompt | GRPO, 3 seeds | 2/50 → 50/50 for each seed |
+
+The vision SFT-only and SFT+GRPO evaluations above use different reserved cohorts.
+The earlier **95/100 greedy** result is not the baseline for **83/100 sampled**.
+On the fresh GRPO comparison cohort, the matched results are **26→83/100 sampled**
+and **91→92/100 greedy**, comparing SFT with SFT followed by GRPO.
 
 All of it fits a free Colab or Kaggle T4. The LFM3 reserved evaluation took about 1.6 hours for 200 episodes, including setup. Every
 "unseen tasks" number comes from a reserved seed range evaluated once, after the protocol, policy and decoder were locked.
