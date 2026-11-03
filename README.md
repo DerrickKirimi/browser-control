@@ -13,6 +13,19 @@ completing the task. Success is decided by the reward that each MiniWoB++ task c
   base model solved none in this experiment's one-call format.
 - **With reinforcement learning only**, [LFM2-350M](https://huggingface.co/Aptheos/lfm2-350m-click-test-grpo) goes from 2/50 to 50/50 on its first browser task.
 
+## Links
+
+| What | Where |
+| --- | --- |
+| Vision adapters: click-sequence SFT, SFT then GRPO, and click-color | [`Aptheos/lfm3-vl-2b-click-sequence-sft`](https://huggingface.co/Aptheos/lfm3-vl-2b-click-sequence-sft) |
+| Book-flight adapter and its replica | [`Aptheos/lfm3-1.7b-book-flight-sft`](https://huggingface.co/Aptheos/lfm3-1.7b-book-flight-sft) |
+| Click-test GRPO adapters, three seeds | [`Aptheos/lfm2-350m-click-test-grpo`](https://huggingface.co/Aptheos/lfm2-350m-click-test-grpo) |
+| Every evaluation episode, screenshot and training record | [`Aptheos/lfm-browser-control-evidence`](https://huggingface.co/datasets/Aptheos/lfm-browser-control-evidence) |
+| Replays to step through, and a narrated tour | [Space: `browser-control-demo`](https://huggingface.co/spaces/Aptheos/browser-control-demo) |
+| Base and tuned models live on a task you choose | [Space: `browser-control-live`](https://huggingface.co/spaces/Aptheos/browser-control-live) |
+| Base models | [LFM3-VL-2B](https://huggingface.co/LiquidAI/LFM3-VL-2B), [LFM3-1.7B](https://huggingface.co/LiquidAI/LFM3-1.7B), [LFM2-350M](https://huggingface.co/LiquidAI/LFM2-350M) |
+| Environment | [MiniWoB++](https://miniwob.farama.org/), [BrowserGym](https://github.com/ServiceNow/BrowserGym) |
+
 ## How it works
 
 <p align="center">
