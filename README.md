@@ -284,6 +284,37 @@ python scripts/verify_reported_numbers.py --evidence evidence
 
 The [evidence index](docs/evidence-index.md) maps each claim to its file and lists what isn't recounted.
 
+## How it's built
+
+A few design choices carry most of the weight:
+
+- **The browser runs inside the training process.** [`local_browsergym.py`](src/browser_control/local_browsergym.py)
+  runs Chromium and MiniWoB++ in the same Python process as the model, with no Docker and no environment server. That's
+  what makes free Colab and Kaggle notebooks enough, and it keeps every task exactly reproducible from its seed. It's
+  modelled on OpenEnv's BrowserGym wrapper ([`openenv/browsergym_env`](https://huggingface.co/spaces/openenv/browsergym_env),
+  BSD-3-Clause), rewritten around this project's smaller interface.
+- **One strict action contract per model.** LFM3 answers in its native tool-call format, LFM2 in a one-line
+  `click('id')`, and LFM3-VL with a click tool whose coordinates run 0–1000 across the screenshot. Each has a strict
+  parser and no repair, so format failures are counted, not hidden.
+- **Multi-turn screenshot episodes.** The vision model gets a fresh screenshot each turn plus its earlier clicks as text
+  ([`vision_evaluation.py`](src/browser_control/vision_evaluation.py)).
+- **Two GRPO paths.** Single-step tasks use TRL's `GRPOTrainer` with a custom rollout function. Whole multi-turn
+  episodes use a small group-relative trainer of my own ([`vision_sequence_grpo.py`](src/browser_control/vision_sequence_grpo.py)),
+  because the reward only arrives when the episode ends.
+- **Experts the environment checks.** Book-flight traces come from a scripted solver. Vision labels are chosen by the
+  task itself: click-color by which box the scorer rewards, click-sequence by the browser's own hit test, so a covered
+  button is never labelled, and a sequence is kept only if the scorer rewards it.
+- **Held-out seeds locked in code.** The evaluator refuses reserved task seeds unless a locked protocol file names the
+  exact seeds, model hash and decoder, and each report records that file's hash.
+- **Controls built in.** Every vision evaluation can swap the screenshot for a white image, and training and evaluation
+  share one decoder definition.
+- **Replays, not recordings.** [`render_episode_replay.py`](scripts/render_episode_replay.py) redraws any recorded
+  episode by resetting its seed and reapplying its actions, and fails if the reward differs.
+  [`render_side_by_side.py`](scripts/render_side_by_side.py) puts two models on the same task next to each other.
+- **Numbers anyone can recount.** [`verify_reported_numbers.py`](scripts/verify_reported_numbers.py) recounts the
+  reported results from raw episodes in the evidence dataset, using only the standard library, and fails if any file
+  has changed.
+
 ## Running it
 
 Tests and lint need only the CPU and [uv](https://docs.astral.sh/uv/):
