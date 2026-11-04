@@ -8,10 +8,10 @@ completing the task. Success is decided by the reward that each MiniWoB++ task c
 
 - **From pixels alone**, [LFM3-VL-2B tuned with SFT, then GRPO](https://huggingface.co/Aptheos/lfm3-vl-2b-click-sequence-sft)
   clicks through a two-button sequence on **92 of 100** held-out tasks greedy and **83 of 100** sampled at temperature 1;
-  the base model solved none in this experiment. Adding GRPO to the SFT adapter raised sampled success from **26/100 to 83/100 on the same fresh tasks**;
+  the base model solved none on the initial 100-task cohort in this experiment. Adding GRPO to the SFT adapter raised sampled success from **26/100 to 83/100 on the same fresh tasks**;
   greedy success on those tasks was **91/100 before GRPO and 92/100 after it**.
 - **From the page's text**, an [SFT-trained LoRA adapter for LFM3-1.7B](https://huggingface.co/Aptheos/lfm3-1.7b-book-flight-sft) books the right flight on **160 of 200** held-out ten-step tasks; the
-  base model solved none in this experiment's one-call format.
+  base model solved none on a separate 100-task cohort in this experiment's one-call format.
 - **With reinforcement learning using GRPO only**, [LFM2-350M](https://huggingface.co/Aptheos/lfm2-350m-click-test-grpo) goes from 2/50 to 50/50 on its first browser task.
 
 ## Links
@@ -34,10 +34,13 @@ completing the task. Success is decided by the reward that each MiniWoB++ task c
        alt="LFM3-VL-2B with the sequence adapter clicking ONE then TWO on reserved task 21001, from the screenshot alone">
 </p>
 
-Above, the [vision adapter](https://huggingface.co/Aptheos/lfm3-vl-2b-click-sequence-sft) on [reserved task 21001](https://huggingface.co/spaces/Aptheos/browser-control-demo?task=21001) of
-[`click-button-sequence`](https://miniwob.farama.org/environments/click-button-sequence/): it sees only the screenshot and
-the instruction, and answers each turn with a click position. The red ring marks where its next click lands. The buttons
-overlap on this task, and it clicks the visible part of ONE, then TWO.
+Above, the [SFT-trained vision adapter](https://huggingface.co/Aptheos/lfm3-vl-2b-click-sequence-sft) performs
+[MiniWoB++](https://miniwob.farama.org/)'s [`click-button-sequence`](https://miniwob.farama.org/environments/click-button-sequence/)
+on [held-out seed 21001](https://huggingface.co/spaces/Aptheos/browser-control-demo?task=21001).
+The model receives a screenshot and the task instruction, without a DOM representation or element IDs. At each turn,
+the model is prompted to output one click position. BrowserGym executes a valid click. The next model input contains
+the updated screenshot and a text record of earlier click coordinates. The red ring marks each click location. The
+buttons overlap in this layout, so the first click targets the visible portion of ONE, followed by a click on TWO.
 
 The text models work the same way but read the page's accessibility tree instead of pixels, and write one tool call,
 such as `fill` a field or `click` an element by its id. [BrowserGym](https://github.com/ServiceNow/BrowserGym) executes it in a real [Chromium](https://www.chromium.org/)
@@ -97,9 +100,9 @@ RootWebArea 'Click Test Task', focused
 	[27] button 'Search'</pre></td></tr>
 </table>
 
-The vision model gets none of that: only the screenshot and the instruction. It answers with a click position from 0 to
-1000 on each axis, measured across the whole screenshot, as below. Its first click on reserved task 21001 lands on the
-visible part of ONE.
+The vision model receives a screenshot rather than an accessibility tree, along with the task instruction and, on
+subsequent turns, a text record of earlier click coordinates. Click positions use coordinates from 0 to 1000 on each
+axis across the whole screenshot, as below. The first click on held-out seed 21001 lands on the visible part of ONE.
 
 <p align="center">
   <img src="docs/media/vision-coordinates.png" width="520"
@@ -141,7 +144,7 @@ judgement to pick the right flight.
 
 | Model | Task | Method | Result |
 | --- | --- | --- | --- |
-| LFM3-VL-2B | [`click-button-sequence`](https://miniwob.farama.org/environments/click-button-sequence/), screenshots only, unseen tasks | Base model | 0/100 |
+| LFM3-VL-2B | [`click-button-sequence`](https://miniwob.farama.org/environments/click-button-sequence/), screenshots only, unseen tasks | Base model, initial evaluation cohort | 0/100 |
 | LFM3-VL-2B | [`click-button-sequence`](https://miniwob.farama.org/environments/click-button-sequence/), screenshots only, unseen tasks | SFT on 234 expert clicks | **95/100 greedy** (95% CI 89–98%); 21/100 sampled at temperature 1 |
 | LFM3-VL-2B | [`click-button-sequence`](https://miniwob.farama.org/environments/click-button-sequence/), fresh unseen tasks | SFT, then GRPO on native reward | **92/100 greedy**, **83/100 sampled** (SFT on the same tasks: 91 and 26) |
 | LFM3-VL-2B | [`click-color`](https://miniwob.farama.org/environments/click-color/), screenshots only, unseen tasks | Base, then SFT | 30/100 → 100/100 sampled, mostly a format fix (see below) |
@@ -154,22 +157,29 @@ The vision SFT-only and SFT+GRPO evaluations above use different reserved cohort
 The earlier **95/100 greedy** result is not the baseline for **83/100 sampled**.
 On the fresh GRPO comparison cohort, the matched results are **26→83/100 sampled**
 and **91→92/100 greedy**, comparing SFT with SFT followed by GRPO.
+All baseline counts describe observations under the reported evaluation harness. The vision base model was evaluated
+on the initial 100-task cohort. The book-flight base model and SFT adapter were evaluated on separate cohorts of
+100 and 200 tasks, respectively, rather than a paired task set.
 
 All of it fits a free Colab or Kaggle T4. The LFM3 reserved evaluation took about 1.6 hours for 200 episodes, including setup. Every
 "unseen tasks" number comes from a reserved seed range evaluated once, after the protocol, policy and decoder were locked.
 
 ### LFM3-VL-2B: clicking a sequence from pixels
 
-The vision model gets no text description of the page at all, only the screenshot and the instruction "Click button ONE,
-then click button TWO." It answers each turn with a click position from 0 to 1000 on each axis, sees the next screenshot,
-and is told its earlier clicks. The two buttons appear anywhere on the page and often overlap.
+The vision model receives a screenshot and the instruction "Click button ONE, then click button TWO," without a DOM
+representation or element IDs. At each turn, the model is prompted to output one click position, using coordinates
+from 0 to 1000 on each axis. BrowserGym executes a valid click. The next model input contains the updated screenshot
+and a text record of earlier click coordinates. The two buttons can appear anywhere on the page and may overlap.
+
+The vision baseline used the specified prompt, a strict action parser, a four-turn limit and a maximum of 128 generated
+tokens per turn. The result does not establish performance under other prompting or inference configurations.
 
 In this experiment the base model solved none of 100 reserved tasks, mostly because its calls were malformed. I trained a [LoRA adapter](https://huggingface.co/Aptheos/lfm3-vl-2b-click-sequence-sft) on
 234 expert turns from 117 training tasks: for each turn, the exact screenshot and prompt the model sees, and a click on
 the visible part of the right button, kept only if the task's own scorer rewarded the episode. On 100 reserved tasks the adapter then
 succeeded on **95 with greedy decoding** and **21 when sampling at temperature 1**. The locked test was the sampled one:
-21 wins against the base model and no losses (exact sign test, p ≈ 1e-6). With a white image in place of the screenshot
-it solved none, so the clicks depend on the pixels.
+21 wins against the base model and no losses (exact sign test, p ≈ 1e-6). The SFT adapter completed no sequences with
+white-image inputs in this evaluation. This supports dependence on screenshot information under the tested conditions.
 
 <p align="center">
   <img src="docs/media/compare-sequence-base-vs-sft-21001.gif" width="560"
@@ -190,8 +200,9 @@ evaluation on 100 fresh tasks (seeds 22000–22099), against the SFT adapter:
 | SFT | 26/100 | 30 | 91/100 | 0/100 |
 | **SFT, then GRPO** | **83/100** (95% CI 75–89%) | **94** | **92/100** | 0/100 |
 
-GRPO won 57 tasks and lost none under sampling (exact sign test, p ≈ 1e-17), cost nothing on greedy, and still solves
-nothing without the pixels. Success among fully valid episodes stayed at 87–88%, so what it learned is to stay in format.
+GRPO won 57 tasks and lost none under sampling (exact sign test, p ≈ 1e-17), and cost nothing on greedy.
+Neither adapter completed a sequence with white-image inputs in this evaluation. This supports dependence on screenshot
+information under the tested conditions. Success among fully valid episodes stayed at 87–88%, so what it learned is to stay in format.
 
 <p align="center">
   <img src="docs/media/compare-sequence-sft-vs-grpo-22001.gif" width="560"
