@@ -6,6 +6,10 @@ real browser through [MiniWoB++](https://miniwob.farama.org/) tasks in [BrowserG
 on the free T4 GPUs of [Google Colab](https://colab.research.google.com/) and [Kaggle](https://www.kaggle.com/). Each turn the model sees the page, as a screenshot or as text, and emits one action toward
 completing the task. Success is decided by the reward that each MiniWoB++ task computes itself.
 
+Try the [live demo: base versus tuned models](https://huggingface.co/spaces/Aptheos/browser-control-live) on a task seed
+you choose, or inspect the [recorded evaluation replays](https://huggingface.co/spaces/Aptheos/browser-control-demo).
+Live outputs are fresh samples; the reported results below come from the recorded evaluations.
+
 - **From pixels alone**, [LFM3-VL-2B tuned with SFT, then GRPO](https://huggingface.co/Aptheos/lfm3-vl-2b-click-sequence-sft)
   clicks through a two-button sequence on **92 of 100** held-out tasks greedy and **83 of 100** sampled at temperature 1;
   the base model solved none on the initial 100-task cohort in this experiment. Adding GRPO to the SFT adapter raised sampled success from **26/100 to 83/100 on the same fresh tasks**;
