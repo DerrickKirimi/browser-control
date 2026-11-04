@@ -8,7 +8,6 @@ completing the task. Success is decided by the reward that each MiniWoB++ task c
 
 Try the [live demo: base versus tuned models](https://huggingface.co/spaces/Aptheos/browser-control-live) on a task seed
 you choose, or inspect the [recorded evaluation replays](https://huggingface.co/spaces/Aptheos/browser-control-demo).
-Live outputs are fresh samples; the reported results below come from the recorded evaluations.
 
 - **From pixels alone**, [LFM3-VL-2B tuned with SFT, then GRPO](https://huggingface.co/Aptheos/lfm3-vl-2b-click-sequence-sft)
   clicks through a two-button sequence on **92 of 100** held-out tasks greedy and **83 of 100** sampled at temperature 1;
@@ -135,14 +134,13 @@ turn picks the airport from it.</td>
 <td><img src="docs/media/book-flight-after-first-call.png" width="260" alt="The From box filled with HOT and its autocomplete list open"></td></tr>
 </table>
 
-**Why `click-test` matters even though it's trivial.** The prompt describes the action format and even gives
-`click('13')` as its example, so the task tests one thing: whether the model will answer in the required form at all.
-Base LFM2-350M mostly didn't. It wrote near misses such as `click('Click Test Task')`, with the page's title where the id
-belongs, or `click(<button id="13">Click Me!</button>)`, with the button's HTML inside the call, and succeeded 2 times in
-50. After GRPO, trained only on that reward, it wrote `click('13')` 50 times in 50, for each of three training seeds.
-That's the first hurdle for any small model acting through tools: no task can be solved before the output is something
-the environment can execute. `book-flight` then asks for the same discipline across ten dependent steps, plus the
-judgement to pick the right flight.
+**Output formatting on `click-test`.** This task uses one fixed prompt and requires no multi-step reasoning. The page
+contains a single button with ID `13`; the expected response is `click('13')`, which also appears in the prompt as an
+example of the action format. Under this output contract, base LFM2-350M completed the task in 2 of 50 sampled responses.
+Other responses included `click('Click Test Task')`, using the page title in place of the element ID, and
+`click(<button id="13">Click Me!</button>)`, placing the button's HTML inside the call. After GRPO, the model returned
+`click('13')` in 50 of 50 samples for each of three training seeds. `book-flight` extends the evaluation to a sequence
+of tool calls and a flight-selection decision.
 
 ## Results
 
@@ -190,9 +188,9 @@ white-image inputs in this evaluation. This supports dependence on screenshot in
        alt="Held-out task 21001, greedy: the base model's first answer is not a valid click; the SFT adapter clicks ONE then TWO">
 </p>
 
-**Then GRPO, to fix sampling.** Sampling was the weak spot: 78 of the 100 sampled episodes ended on a malformed call,
-while episodes where every call was valid succeeded 95% of the time. The visual decision was learned; staying in format at
-temperature 1 wasn't. Unlike the book-flight adapter, sampled episodes now varied in reward, which is what GRPO needs.
+**GRPO improves sampled action validity.** Under sampling, 78 of 100 episodes ended on a malformed call. Among episodes
+with valid calls throughout, 95% succeeded. Output formatting remained a common source of failure, and sampled episodes
+varied in reward, providing a learning signal for GRPO.
 
 I used a simplified GRPO over whole episodes. For each of the same 120 training tasks it samples 4 episodes, scores each
 only by the task's own reward, and weights every turn of an episode by that episode's reward minus its group's mean. That's
@@ -204,9 +202,13 @@ evaluation on 100 fresh tasks (seeds 22000–22099), against the SFT adapter:
 | SFT | 26/100 | 30 | 91/100 | 0/100 |
 | **SFT, then GRPO** | **83/100** (95% CI 75–89%) | **94** | **92/100** | 0/100 |
 
-GRPO won 57 tasks and lost none under sampling (exact sign test, p ≈ 1e-17), and cost nothing on greedy.
-Neither adapter completed a sequence with white-image inputs in this evaluation. This supports dependence on screenshot
-information under the tested conditions. Success among fully valid episodes stayed at 87–88%, so what it learned is to stay in format.
+GRPO won 57 tasks and lost none under sampling (exact sign test, p ≈ 1e-17). On the same cohort, greedy success was
+91/100 before GRPO and 92/100 afterward. Neither adapter completed a sequence with white-image inputs.
+
+Sampled episodes with valid calls throughout increased from 30/100 to 94/100. Within those subsets, success was 26/30
+(86.7%) before GRPO and 83/94 (88.3%) afterward. The improvement therefore appears to come largely from more reliable
+output formatting. These subsets contain different episodes, so the conditional rates do not isolate changes in
+visual decision quality.
 
 <p align="center">
   <img src="docs/media/compare-sequence-sft-vs-grpo-22001.gif" width="560"
@@ -278,18 +280,16 @@ MiniWoB, under a sampling decoder at temperature 1 with `top_p` .95. The 0/100 a
 attention implementations, so they aren't a paired comparison. Policy selection used development tasks 70–99, which were reused across candidates, so the
 development scores are not held-out estimates. Only the reserved number is.
 
-### Why GRPO did nothing here
+### Book-flight GRPO
 
-GRPO compares samples from the same task, and after the final SFT stage samples rarely differed. On 12 fresh tasks, four
-samples each, every group matched token for token, so 0 of 12 groups varied in reward: 6 at temperature 1.25 with
-`top_p` .95, and 6 at temperature 1 with no cutoff. At temperature 1, a whole episode reproduced with probability
-.936–.987. Variation at that rate is rare rather than impossible, but it's too rare to fund GRPO at this budget. The two
-failing tasks at temperature 1 were at .936 and .986, so failing didn't mean uncertain, though two tasks is a small sample.
+An earlier 24-group run from a weaker SFT checkpoint changed development success from 20/30 to 21/30. This small change
+does not establish an improvement. Temperature and some training tasks were selected after inspecting variation probes;
+those choices and the run details are recorded in the [book-flight methods](docs/lfm3-book-flight.md).
 
-An earlier 24-group run from a weaker SFT policy moved development tasks from 20/30 to 21/30, which is no detectable
-effect. That policy did vary (2 of 8 groups at temperature 1, 3 of 8 at 1.25), and I picked 1.25 and some of the tasks
-after seeing those checks, which favours finding an effect. This says GRPO had little signal on these policies, not that
-GRPO can't help a less confident one. So there is no GRPO adapter from this work.
+Before training the final SFT checkpoint further, I checked whether sampled episodes differed in reward. Each of 12
+fresh tasks was sampled four times: six tasks at temperature 1.25 with top-p 0.95, and six at temperature 1 without
+truncation. All four episodes in each group had the same reward, leaving no group-relative learning signal in these
+samples. Training did not proceed from the final checkpoint.
 
 ### LFM2-350M on [`click-test`](https://miniwob.farama.org/environments/click-test/)
 
