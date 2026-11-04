@@ -15,7 +15,7 @@ you choose, or inspect the [recorded evaluation replays](https://huggingface.co/
   greedy success on those tasks was **91/100 before GRPO and 92/100 after it**.
 - **From the page's text**, an [SFT-trained LoRA adapter for LFM3-1.7B](https://huggingface.co/Aptheos/lfm3-1.7b-book-flight-sft) books the right flight on **160 of 200** held-out ten-step tasks; the
   base model completed 0/100 tasks on a separate cohort under the reported one-call-per-turn settings.
-- **With reinforcement learning using GRPO only**, [LFM2-350M](https://huggingface.co/Aptheos/lfm2-350m-click-test-grpo) goes from 2/50 to 50/50 on its first browser task.
+- **With GRPO and a decaying formatting curriculum**, [LFM2-350M](https://huggingface.co/Aptheos/lfm2-350m-click-test-grpo) goes from 2/50 to 50/50 on its first browser task.
 
 ## Links
 
@@ -139,21 +139,24 @@ contains a single button with ID `13`; the expected response is `click('13')`, w
 example of the action format. Under this output contract, base LFM2-350M completed the task in 2 of 50 sampled responses.
 Other responses included `click('Click Test Task')`, using the page title in place of the element ID, and
 `click(<button id="13">Click Me!</button>)`, placing the button's HTML inside the call. After GRPO, the model returned
-`click('13')` in 50 of 50 samples for each of three training seeds. `book-flight` extends the evaluation to a sequence
-of tool calls and a flight-selection decision.
+`click('13')` in 50 of 50 samples for each of three training seeds. These are repeated completions of one fixed prompt.
+Training used a temporary formatting curriculum: early unsuccessful responses received partial credit for valid syntax
+or similarity to the expected action. This extra reward decayed to zero after group 40. All three runs reached perfect
+training groups before the curriculum ended and retained that performance during the strict-reward phase.
+`book-flight` extends the evaluation to a sequence of tool calls and a flight-selection decision.
 
 ## Results
 
 | Model | Task | Method | Result |
 | --- | --- | --- | --- |
 | LFM3-VL-2B | [`click-button-sequence`](https://miniwob.farama.org/environments/click-button-sequence/), screenshots only, unseen tasks | Base model, initial evaluation cohort | 0/100 |
-| LFM3-VL-2B | [`click-button-sequence`](https://miniwob.farama.org/environments/click-button-sequence/), screenshots only, unseen tasks | SFT on 234 expert clicks | **95/100 greedy** (95% CI 89–98%); 21/100 sampled at temperature 1 |
+| LFM3-VL-2B | [`click-button-sequence`](https://miniwob.farama.org/environments/click-button-sequence/), screenshots only, unseen tasks | SFT on 234 expert clicks | **95/100 greedy** (95% Wilson CI 89–98%); 21/100 sampled at temperature 1 |
 | LFM3-VL-2B | [`click-button-sequence`](https://miniwob.farama.org/environments/click-button-sequence/), fresh unseen tasks | SFT, then GRPO on native reward | **92/100 greedy**, **83/100 sampled** (SFT on the same tasks: 91 and 26) |
 | LFM3-VL-2B | [`click-color`](https://miniwob.farama.org/environments/click-color/), screenshots only, unseen tasks | Base, then SFT | 30/100 → 100/100 sampled, mostly a format fix (see below) |
 | LFM3-1.7B | [`book-flight`](https://miniwob.farama.org/environments/book-flight/), multi-step, unseen tasks | Base model, one call per turn, thinking off, 128 tokens | 0/100 |
 | LFM3-1.7B | [`book-flight`](https://miniwob.farama.org/environments/book-flight/), multi-step, unseen tasks | Supervised fine-tuning (SFT) on scripted expert traces | **160/200, 80.0%** (95% CI 73.9–85.0%) |
 | LFM3-1.7B | [`book-flight`](https://miniwob.farama.org/environments/book-flight/), GRPO on top of SFT | Native reward | No detectable effect, and too little variation to continue |
-| LFM2-350M | [`click-test`](https://miniwob.farama.org/environments/click-test/), one fixed prompt | GRPO, 3 seeds | 2/50 → 50/50 for each seed |
+| LFM2-350M | [`click-test`](https://miniwob.farama.org/environments/click-test/), one fixed prompt | GRPO with a decaying formatting curriculum, 3 seeds | 2/50 → 50/50 sampled completions of one fixed prompt for each seed |
 
 The vision SFT-only and SFT+GRPO evaluations above use different reserved cohorts.
 The earlier **95/100 greedy** result is not the baseline for **83/100 sampled**.
@@ -163,8 +166,9 @@ All baseline counts describe observations under the reported evaluation harness.
 on the initial 100-task cohort. The book-flight base model and SFT adapter were evaluated on separate cohorts of
 100 and 200 tasks, respectively, rather than a paired task set.
 
-All of it fits a free Colab or Kaggle T4. The LFM3 reserved evaluation took about 1.6 hours for 200 episodes, including setup. Every
-"unseen tasks" number comes from a reserved seed range evaluated once, after the protocol, policy and decoder were locked.
+The reported LoRA training runs fit on a free Colab or Kaggle T4. The LFM3 reserved evaluation took about 1.6 hours for
+200 episodes, including setup. Each declared held-out condition was evaluated once, after the protocol, policy and
+decoder were locked.
 
 ### LFM3-VL-2B: clicking a sequence from pixels
 
@@ -177,8 +181,10 @@ The vision baseline used the specified prompt, a strict action parser, a four-tu
 tokens per turn. The result does not establish performance under other prompting or inference configurations.
 
 Under these settings, the base model completed 0/100 reserved tasks with each decoder. Most episodes ended on an invalid tool call. I trained a [LoRA adapter](https://huggingface.co/Aptheos/lfm3-vl-2b-click-sequence-sft) on
-234 expert turns from 117 training tasks: for each turn, the exact screenshot and prompt the model sees, and a click on
-the visible part of the right button, kept only if the task's own scorer rewarded the episode. On 100 reserved tasks the adapter then
+234 expert turns from 117 training tasks. A scripted expert used browser geometry and hit-testing to label the visible
+part of each button; those queries were used only to construct training labels. Three of 120 training layouts yielded
+no valid labeled sequence and were excluded. All 100 reserved evaluation seeds were retained. Each training example
+contains the screenshot and prompt for that turn, paired with the expert click from a rewarded episode. On 100 reserved tasks the adapter then
 succeeded on **95 with greedy decoding** and **21 when sampling at temperature 1**. The locked test was the sampled one:
 21 wins against the base model and no losses (exact sign test, p ≈ 1e-6). The SFT adapter completed no sequences with
 white-image inputs in this evaluation. This supports dependence on screenshot information under the tested conditions.
@@ -202,7 +208,8 @@ evaluation on 100 fresh tasks (seeds 22000–22099), against the SFT adapter:
 | SFT | 26/100 | 30 | 91/100 | 0/100 |
 | **SFT, then GRPO** | **83/100** (95% CI 75–89%) | **94** | **92/100** | 0/100 |
 
-GRPO won 57 tasks and lost none under sampling (exact sign test, p ≈ 1e-17). On the same cohort, greedy success was
+Under the fixed generation-seed rule, GRPO succeeded on 57 tasks where the SFT adapter failed, with no reverse outcomes
+(exact paired sign test, p ≈ 1e-17). On the same cohort, greedy success was
 91/100 before GRPO and 92/100 afterward. Neither adapter completed a sequence with white-image inputs.
 
 Sampled episodes with valid calls throughout increased from 30/100 to 94/100. Within those subsets, success was 26/30
@@ -215,20 +222,20 @@ visual decision quality.
        alt="Held-out task 22001, sampled: the SFT adapter's answer is not a valid action; after GRPO it clicks ONE then TWO">
 </p>
 
-**What this does and doesn't show.** It's one MiniWoB task family with at most four clicks, not general computer use.
-Both comparisons above are replays of the recorded held-out episodes, the same ones the numbers count.
+The vision comparison evaluates one GRPO training run on held-out layouts from one MiniWoB++ task family, with at most
+four clicks per episode. The three-seed replication reported below applies to click-test.
 
 **One click first.** Before the sequence, I trained a one-click adapter on
 [`click-color`](https://miniwob.farama.org/environments/click-color/) ("click the cyan box"). On 100 reserved tasks it
 went from 30 to 100 successes against the base model, but the base model already picked the right box in 30 of its 31
-valid calls, so that gain is mainly the call format. A GRPO adapter matched it, but solved 6 of 100 tasks on white
-images, above my declared limit of 5, so I don't claim it. The sequence adapter started from the one-click adapter, which
-on its own solved 1 of 40 development sequences: it had the format, and it learned the sequence.
+valid calls, so most of the improvement was associated with valid output formatting. A GRPO adapter scored 100/100 with
+screenshots and 6/100 with white images, compared with a predeclared white-image limit of 5/100. The sequence adapter
+started from the one-click adapter, which completed 1 of 40 development sequences before sequence training.
 
 ### LFM3-VL-2B before training
 
-The untrained model already uses the pixels when it produces a valid call: on the one-click tasks it scored 0 of 120
-on a white image. Its failures on real screenshots were mostly malformed calls, which the strict parser rejects. See the
+On the one-click development tasks, the base model completed 0/120 episodes with white-image inputs. Most failures on
+real screenshots ended on malformed calls, which the strict parser rejects. See the
 [vision baseline](docs/results/lfm3-vision-baseline.md).
 
 <p align="center">
@@ -272,7 +279,7 @@ goals failed more often (28 of 105) than "cheapest" (12 of 95).
 </p>
 
 A typical failure, reserved task 10108: the shortest flight, 7h 29m, is the first one listed, and the agent booked the
-10h 41m flight further down instead. The form was filled correctly; the comparison went wrong.
+10h 41m flight further down instead. In this episode, the model completed the form but selected a longer flight than the shortest option shown.
 
 **What this does and doesn't show.** This is an estimate for one policy on one task family: simulated flights in
 MiniWoB, under a sampling decoder at temperature 1 with `top_p` .95. The 0/100 and 160/200 used different seed ranges and
@@ -307,8 +314,8 @@ See the [three-seed report](docs/results/phase5-three-seed-reproducibility.md).
 | [`Aptheos/lfm2-350m-click-test-grpo`](https://huggingface.co/Aptheos/lfm2-350m-click-test-grpo) | Three GRPO adapters, seeds 23, 47 and 71 |
 | [`Aptheos/lfm-browser-control-evidence`](https://huggingface.co/datasets/Aptheos/lfm-browser-control-evidence) | Raw reports with every episode, the expert corpus and screenshots |
 
-The main results can be recounted offline from individual episodes, with no model or GPU. The script's bundle hash is
-pinned, so an edit to any listed report or screenshot fails:
+The verification script recomputes reported metrics from the released episodes and checks artifact hashes against the
+pinned manifest. It runs offline without a model or GPU:
 
 ```bash
 uvx --from huggingface_hub hf download Aptheos/lfm-browser-control-evidence --repo-type dataset --local-dir evidence
@@ -374,7 +381,7 @@ model files. Supporting packages without a bearing on the numbers are kept curre
 
 - **Invalid output stays a failure.** A strict parser rejects malformed calls; nothing repairs them or retries.
 - **Native reward only.** Success is the environment's terminal reward, with no shaping or oracle in evaluation.
-- **Reserved tasks were used once.** The policy hash, decoder and task list were locked first, and no threshold or second attempt was involved.
+- **Held-out comparisons were fixed in advance.** Models, decoders and analysis rules were fixed before each comparison. Each declared condition was evaluated once, with shared task seeds across comparison arms.
 - **GRPO masks are checked.** Browser observations are context and receive zero policy gradient, checked on the real model in a one-update run. See the [book-flight protocol](docs/lfm3-book-flight.md).
 - **An element-ID control.** Consistently renumbering page IDs moved no skill by more than 1 of 20 probes, which is weak evidence against ID memorisation.
 
@@ -384,7 +391,7 @@ Liquid AI's cookbook trains LFM2-350M on MiniWoB++ `click-test` with GRPO throug
 ([example](https://github.com/Liquid4All/cookbook/tree/main/examples/browser-control),
 [write-up by Pau Labarta Bajo](https://paulabartabajo.substack.com/p/fine-tuning-lfm2-350m-for-browser)), and names
 `book-flight` and vision models as next steps. This project measures that `click-test` result across seeds and takes both natural
-next steps, with held-out evaluation.
+next steps, with held-out evaluation on book-flight and vision layouts.
 
 ## Repository guide
 
