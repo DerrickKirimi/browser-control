@@ -11,10 +11,10 @@ you choose, or inspect the [recorded evaluation replays](https://huggingface.co/
 
 - **From pixels alone**, [LFM3-VL-2B tuned with SFT, then GRPO](https://huggingface.co/Aptheos/lfm3-vl-2b-click-sequence-sft)
   clicks through a two-button sequence on **92 of 100** held-out tasks greedy and **83 of 100** sampled at temperature 1;
-  the base model solved none on the initial 100-task cohort in this experiment. Adding GRPO to the SFT adapter raised sampled success from **26/100 to 83/100 on the same fresh tasks**;
+  the base model completed 0/100 tasks on the initial cohort under the reported evaluation settings. Adding GRPO to the SFT adapter raised sampled success from **26/100 to 83/100 on the same fresh tasks**;
   greedy success on those tasks was **91/100 before GRPO and 92/100 after it**.
 - **From the page's text**, an [SFT-trained LoRA adapter for LFM3-1.7B](https://huggingface.co/Aptheos/lfm3-1.7b-book-flight-sft) books the right flight on **160 of 200** held-out ten-step tasks; the
-  base model solved none on a separate 100-task cohort in this experiment's one-call format.
+  base model completed 0/100 tasks on a separate cohort under the reported one-call-per-turn settings.
 - **With reinforcement learning using GRPO only**, [LFM2-350M](https://huggingface.co/Aptheos/lfm2-350m-click-test-grpo) goes from 2/50 to 50/50 on its first browser task.
 
 ## Links
@@ -176,7 +176,7 @@ and a text record of earlier click coordinates. The two buttons can appear anywh
 The vision baseline used the specified prompt, a strict action parser, a four-turn limit and a maximum of 128 generated
 tokens per turn. The result does not establish performance under other prompting or inference configurations.
 
-In this experiment the base model solved none of 100 reserved tasks, mostly because its calls were malformed. I trained a [LoRA adapter](https://huggingface.co/Aptheos/lfm3-vl-2b-click-sequence-sft) on
+Under these settings, the base model completed 0/100 reserved tasks with each decoder. Most episodes ended on an invalid tool call. I trained a [LoRA adapter](https://huggingface.co/Aptheos/lfm3-vl-2b-click-sequence-sft) on
 234 expert turns from 117 training tasks: for each turn, the exact screenshot and prompt the model sees, and a click on
 the visible part of the right button, kept only if the task's own scorer rewarded the episode. On 100 reserved tasks the adapter then
 succeeded on **95 with greedy decoding** and **21 when sampling at temperature 1**. The locked test was the sampled one:
@@ -241,17 +241,16 @@ Base LFM3-VL-2B, greedy, on `click-color` task 30: the same prompt, with and wit
 ### LFM3-1.7B on [`book-flight`](https://miniwob.farama.org/environments/book-flight/)
 
 The agent has to fill in origin and destination through autocomplete, work a read-only date picker, search, and book
-the cheapest or shortest of the flights shown, on the `book-flight-nodelay` variant. Under this harness the base model
-succeeded on none of 100 tasks. The harness asks for exactly one tool call per turn, with thinking off, at most 128 new
-tokens, and a strict parser. In 97 of the 100 episodes the last turn was prose reasoning that reached the 128-token cap
+the cheapest or shortest of the flights shown, on the `book-flight-nodelay` variant. The base model completed 0/100
+tasks under evaluation settings requiring exactly one tool call per turn, with thinking disabled, a limit of 128
+generated tokens per response and a strict action parser. In 97 of the 100 episodes the last turn was prose reasoning that reached the 128-token cap
 before any call. On separate development probes, which start the model at a known step, 105 of 120 calls were
 well-formed but only 24 matched an action that reaches that step's outcome; with thinking on and 512 tokens per turn it
-was 32 of 120. That's a result for an untuned general model in this one-call format, not a measure of what LFM3 can do
-elsewhere. The counts are in the evidence dataset (`lfm3-book-flight/base-gate.json`,
+was 32 of 120. The counts are in the evidence dataset (`lfm3-book-flight/base-gate.json`,
 `lfm3-book-flight/development-diagnostic.json`), and `scripts/verify_reported_numbers.py` recounts each of them.
 
-On the same 30 development tasks the SFT adapter was tuned on (seeds 70–99), with an identical harness, the base model
-succeeded on none and the adapter on 25. Here is one of them, side by side:
+On the same 30 development tasks used for adapter selection (seeds 70–99), the base model completed 0/30 tasks and the
+SFT adapter completed 25/30 under identical evaluation settings. The following replay shows one of those tasks:
 
 <p align="center">
   <img src="docs/media/compare-book-flight-base-vs-sft-71.gif" width="560"
