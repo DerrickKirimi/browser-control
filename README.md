@@ -381,7 +381,9 @@ model files. Supporting packages without a bearing on the numbers are kept curre
 
 - **Invalid output stays a failure.** A strict parser rejects malformed calls; nothing repairs them or retries.
 - **Native reward only.** Success is the environment's terminal reward, with no shaping or oracle in evaluation.
-- **Held-out comparisons were fixed in advance.** Models, decoders and analysis rules were fixed before each comparison. Each declared condition was evaluated once, with shared task seeds across comparison arms.
+- **Test settings are fixed in advance.** Models, decoding settings and scoring rules were fixed before testing.
+  Each planned evaluation was run once. Paired comparisons used the same tasks for both models. Any further model
+  tuning was evaluated on a new test set.
 - **GRPO masks are checked.** Browser observations are context and receive zero policy gradient, checked on the real model in a one-update run. See the [book-flight protocol](docs/lfm3-book-flight.md).
 - **An element-ID control.** Consistently renumbering page IDs moved no skill by more than 1 of 20 probes, which is weak evidence against ID memorisation.
 
