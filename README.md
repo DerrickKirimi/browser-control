@@ -9,6 +9,8 @@ completing the task. Success is decided by the reward that each MiniWoB++ task c
 Try the [live demo: base versus tuned models](https://huggingface.co/spaces/Aptheos/browser-control-live) on a task seed
 you choose, or inspect the [recorded evaluation replays](https://huggingface.co/spaces/Aptheos/browser-control-demo).
 
+Read the accompanying article: [Teaching small Liquid models to use a browser](https://derrickkirimi.com/posts/teaching-small-liquid-models-to-use-a-browser/).
+
 - **From pixels alone**, [LFM3-VL-2B tuned with SFT, then GRPO](https://huggingface.co/Aptheos/lfm3-vl-2b-click-sequence-sft)
   clicks through a two-button sequence on **92 of 100** held-out tasks greedy and **83 of 100** sampled at temperature 1;
   the base model completed 0/100 tasks on the initial cohort under the reported evaluation settings. Adding GRPO to the SFT adapter raised sampled success from **26/100 to 83/100 on the same fresh tasks**;
